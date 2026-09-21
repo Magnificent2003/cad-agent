@@ -1,0 +1,42 @@
+# Secrets and machine-specific agent settings
+.env
+.env.*
+!.env.example
+.agents/
+.codex/
+*.pem
+*.key
+
+# Local runtimes, caches and generated outputs
+.venv/
+.tools/
+.cache/
+.runtime/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+coverage/
+.coverage*
+htmlcov/
+data/
+tmp/
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Engineering drawings and fonts supplied privately by users
+samples/private/
+assets/fonts/local/
+*.dwg
+*.bak
+*.dwl
+*.dwl2
+*.xlsx

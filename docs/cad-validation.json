@@ -1,0 +1,572 @@
+{
+  "converter": "ODAFileConverter 27.1.0.0",
+  "ezdxf": "1.4.4",
+  "results": [
+    {
+      "source": "samples/private/白桥室外施工图纸/白桥二期绿化施工图0414/入口标识.dwg",
+      "source_bytes": 233444,
+      "import": "passed",
+      "elapsed_seconds": 3.77,
+      "units": {
+        "code": 0,
+        "name": "unspecified",
+        "confirmed": false
+      },
+      "entity_counts": {
+        "LINE": 4047,
+        "LWPOLYLINE": 1,
+        "ACAD_PROXY_ENTITY": 62,
+        "INSERT": 10,
+        "IMAGE": 1,
+        "VIEWPORT": 5
+      },
+      "layouts": [
+        {
+          "name": "Model",
+          "entity_count": 4098,
+          "bbox": [
+            32386.5322076628,
+            18651.51225509103,
+            73122.26097501405,
+            33814.5617515502
+          ]
+        },
+        {
+          "name": "布局1",
+          "entity_count": 28,
+          "bbox": [
+            -378.81970467295093,
+            -293.6724754638097,
+            1465.182630423874,
+            502.81453823259227
+          ]
+        },
+        {
+          "name": "布局2",
+          "entity_count": 0,
+          "bbox": null
+        }
+      ],
+      "warnings": [
+        "图纸未指定单位；执行尺寸修改或测量前需要明确确认单位。",
+        "部分字体缺失，预览已使用回退字体；字宽和换行可能与原始出图不同。",
+        "图纸包含外部参照或图片，依赖已列入报告，预览暂未加载这些外部文件。",
+        "代理对象、ACIS 或 OLE 对象在预览中可能被省略或简化。",
+        "预览为二维近似；字体、代理对象和多行文字效果可能与 CAD 原始出图不同。",
+        "轻量预览仅显示填充边界；DXF 中保留全部原始填充数据。"
+      ],
+      "fonts": [
+        {
+          "style": "Standard",
+          "kind": "font",
+          "requested": "gbenor.shx",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "Standard",
+          "kind": "bigfont",
+          "requested": "gbcbig.shx",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "ASHADE",
+          "kind": "font",
+          "requested": "txt.shx",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "ASHADE",
+          "kind": "bigfont",
+          "requested": "chineset.shx",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_KCYD_DIM",
+          "kind": "font",
+          "requested": "gbenor.shx",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_KCYD_DIM",
+          "kind": "bigfont",
+          "requested": "gbcbig.shx",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_TCH_DIM",
+          "kind": "font",
+          "requested": "SIMPLEX",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_TCH_DIM",
+          "kind": "bigfont",
+          "requested": "GBCBIG",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_TCH_DIM_T3",
+          "kind": "font",
+          "requested": "SIMPLEX",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_TCH_DIM_T3",
+          "kind": "bigfont",
+          "requested": "GBCBIG",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "图框英文",
+          "kind": "font",
+          "requested": "simplex.shx",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "图框英文",
+          "kind": "bigfont",
+          "requested": "hztxt.shx",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "TK-黑体",
+          "kind": "font",
+          "requested": "simhei.ttf",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "TK1",
+          "kind": "font",
+          "requested": "simplex_.ttf",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "TK1",
+          "kind": "bigfont",
+          "requested": "hztxt",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_TCH_LABEL",
+          "kind": "font",
+          "requested": "COMPLEX",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_TCH_LABEL",
+          "kind": "bigfont",
+          "requested": "GBCBIG",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "STANDARD_T3",
+          "kind": "font",
+          "requested": "gbenor.shx",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "STANDARD_T3",
+          "kind": "bigfont",
+          "requested": "gbcbig.shx",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        }
+      ],
+      "preview": "data/validation/sample-1/preview.png",
+      "dwg_export": {
+        "format": "dwg",
+        "filename": "drawing.dwg",
+        "verified": true,
+        "verification": "reimported ordered native geometry/text, attributes, units and layout/layer comparison",
+        "numerical_tolerance": 1e-07,
+        "tolerance_unit": "native drawing units (floating-point serialization only)",
+        "limitations": "Checks key layout entity data; does not certify all proprietary object internals."
+      },
+      "source_unchanged": true,
+      "preview_seconds": 2.03,
+      "preview_svg_bytes": 929136,
+      "preview_bbox": [
+        32386.5322076628,
+        18651.51225509103,
+        73122.26097501405,
+        33814.5617515502
+      ],
+      "preview_metadata": {
+        "artifacts": {
+          "svg": "preview.svg",
+          "png": "preview.png"
+        },
+        "layout": "Model",
+        "bbox": [
+          32386.5322076628,
+          18651.51225509103,
+          73122.26097501405,
+          33814.5617515502
+        ],
+        "units": {
+          "code": 0,
+          "name": "unspecified",
+          "confirmed": false
+        },
+        "coordinate_system": "WCS",
+        "hatch_preview": "outline",
+        "warnings": [
+          "预览为二维近似；字体、代理对象和多行文字效果可能与 CAD 原始出图不同。",
+          "轻量预览仅显示填充边界；DXF 中保留全部原始填充数据。"
+        ],
+        "svg_bytes": 929136,
+        "png_bytes": 27220,
+        "preferred_format": "svg"
+      }
+    },
+    {
+      "source": "samples/private/白桥室外施工图纸/白桥一号园（二期）总图20260414_t9.dwg",
+      "source_bytes": 1564379,
+      "import": "passed",
+      "elapsed_seconds": 128.07,
+      "units": {
+        "code": 4,
+        "name": "mm",
+        "confirmed": true
+      },
+      "entity_counts": {
+        "INSERT": 3719,
+        "WIPEOUT": 3,
+        "XLINE": 3,
+        "ACAD_PROXY_ENTITY": 30,
+        "LWPOLYLINE": 2178,
+        "POLYLINE": 273,
+        "TEXT": 1426,
+        "LINE": 2967,
+        "ARC": 3340,
+        "CIRCLE": 1,
+        "HATCH": 82,
+        "ELLIPSE": 143,
+        "SOLID": 10,
+        "MTEXT": 5,
+        "POINT": 35,
+        "DIMENSION": 2
+      },
+      "layouts": [
+        {
+          "name": "\\M+5B2BC\\M+5BED61",
+          "entity_count": 0,
+          "bbox": null
+        },
+        {
+          "name": "Model",
+          "entity_count": 14217,
+          "bbox": [
+            0.0,
+            0.0,
+            40481189.19550235,
+            3145282.157516545
+          ]
+        }
+      ],
+      "warnings": [
+        "部分字体缺失，预览已使用回退字体；字宽和换行可能与原始出图不同。",
+        "代理对象、ACIS 或 OLE 对象在预览中可能被省略或简化。",
+        "预览为二维近似；字体、代理对象和多行文字效果可能与 CAD 原始出图不同。",
+        "轻量预览仅显示填充边界；DXF 中保留全部原始填充数据。",
+        "概览使用 CAD 保存的范围展示主要图形；远处实体仍保留在完整图纸中，可通过原生查询或指定范围预览查看。"
+      ],
+      "fonts": [
+        {
+          "style": "Standard",
+          "kind": "font",
+          "requested": "arial.ttf",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "HZ",
+          "kind": "font",
+          "requested": "rs.shx",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "HZ",
+          "kind": "bigfont",
+          "requested": "hztxt.shx",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_TCH_DIM",
+          "kind": "font",
+          "requested": "SIMPLEX",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_TCH_DIM",
+          "kind": "bigfont",
+          "requested": "GBCBIG",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "\\M+5BADA\\M+5CCE5",
+          "kind": "font",
+          "requested": "simhei.ttf",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_TCH_DIM_T3",
+          "kind": "font",
+          "requested": "SIMPLEX",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_TCH_DIM_T3",
+          "kind": "bigfont",
+          "requested": "GBCBIG",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_TCH_AXIS",
+          "kind": "font",
+          "requested": "COMPLEX",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_TCH_AXIS",
+          "kind": "bigfont",
+          "requested": "GBCBIG",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "COMPLEX",
+          "kind": "font",
+          "requested": "COMPLEX",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "TK-\\M+5BADA\\M+5CCE5",
+          "kind": "font",
+          "requested": "simhei.ttf",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "\\M+5CDBC\\M+5BFF2\\M+5D3A2\\M+5CEC4",
+          "kind": "font",
+          "requested": "simplex.shx",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "\\M+5CDBC\\M+5BFF2\\M+5D3A2\\M+5CEC4",
+          "kind": "bigfont",
+          "requested": "hztxt.shx",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "TK1",
+          "kind": "font",
+          "requested": "simplex",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "TK1",
+          "kind": "bigfont",
+          "requested": "hztxt",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "-\\M+5BADA\\M+5CCE5",
+          "kind": "font",
+          "requested": "simhei.ttf",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "HT",
+          "kind": "font",
+          "requested": "simhei.ttf",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_TCH_LABEL",
+          "kind": "font",
+          "requested": "COMPLEX",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "_TCH_LABEL",
+          "kind": "bigfont",
+          "requested": "GBCBIG",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "DIM_FONT",
+          "kind": "font",
+          "requested": "SIMPLEX",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        },
+        {
+          "style": "DIM_FONT",
+          "kind": "bigfont",
+          "requested": "GBCBIG",
+          "resolved": "DejaVuSansCondensed.ttf",
+          "preview_font": "DroidSansFallbackFull.ttf",
+          "substituted": true
+        }
+      ],
+      "preview": "data/validation/sample-2/preview.png",
+      "dwg_export": {
+        "format": "dwg",
+        "filename": "drawing.dwg",
+        "verified": true,
+        "verification": "reimported ordered native geometry/text, attributes, units and layout/layer comparison",
+        "numerical_tolerance": 1e-07,
+        "tolerance_unit": "native drawing units (floating-point serialization only)",
+        "limitations": "Checks key layout entity data; does not certify all proprietary object internals."
+      },
+      "source_unchanged": true,
+      "preview_seconds": 27.71,
+      "preview_svg_bytes": 22837234,
+      "preview_bbox": [
+        40480092.61244694,
+        3144338.578250936,
+        40481178.46479164,
+        3145372.019087589
+      ],
+      "preview_metadata": {
+        "artifacts": {
+          "svg": "preview.svg",
+          "png": "preview.png"
+        },
+        "layout": "Model",
+        "bbox": [
+          40480092.61244694,
+          3144338.578250936,
+          40481178.46479164,
+          3145372.019087589
+        ],
+        "units": {
+          "code": 4,
+          "name": "mm",
+          "confirmed": true
+        },
+        "coordinate_system": "WCS",
+        "hatch_preview": "outline",
+        "warnings": [
+          "预览为二维近似；字体、代理对象和多行文字效果可能与 CAD 原始出图不同。",
+          "轻量预览仅显示填充边界；DXF 中保留全部原始填充数据。",
+          "概览使用 CAD 保存的范围展示主要图形；远处实体仍保留在完整图纸中，可通过原生查询或指定范围预览查看。"
+        ],
+        "svg_bytes": 22837234,
+        "png_bytes": 477817,
+        "preferred_format": "png"
+      }
+    }
+  ],
+  "test_results": {
+    "suite": "tests/test_cad.py",
+    "passed": 17
+  },
+  "real_edit": {
+    "status": "passed",
+    "target_handle": "12E0",
+    "elapsed_seconds": 39.93,
+    "changes": {
+      "operations": [
+        {
+          "type": "set_text",
+          "modified_handles": [
+            "12E0"
+          ],
+          "added_handles": [],
+          "mtext_format": "replacement"
+        }
+      ],
+      "modified_handles": [
+        "12E0"
+      ],
+      "added_handles": [],
+      "preservation_verified": true,
+      "non_target_entity_count": 26466,
+      "unit_confirmation": null,
+      "sequence_markers": {
+        "removed_handles": 5484,
+        "created_handles": 5484,
+        "note": "Empty SEQEND delimiters may receive new handles on DXF serialization; markers with application data remain strictly checked."
+      }
+    },
+    "preferred_format": "png"
+  }
+}

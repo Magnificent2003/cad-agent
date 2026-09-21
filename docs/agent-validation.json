@@ -1,0 +1,71 @@
+{
+  "validation_date": "2026-09-21",
+  "versions": {
+    "opencode": "1.18.31",
+    "mcp": "2.2.0",
+    "model": "deepseek-flash"
+  },
+  "vision": {
+    "passed": true,
+    "opencode": {
+      "healthy": true,
+      "version": "1.18.31"
+    },
+    "model": "deepseek-flash",
+    "data": "synthetic PNG only",
+    "image_tool": "cad_render_region",
+    "followup_tool": "cad_verify_visual",
+    "session_id": "ses_f3dc2dd4dffemYpc61CerXt7vc",
+    "event_types": [
+      "message.part.delta",
+      "message.part.updated",
+      "message.updated",
+      "session.diff",
+      "session.status",
+      "session.updated"
+    ]
+  },
+  "cad": {
+    "passed": true,
+    "data": "synthetic DXF only",
+    "model": "deepseek-flash",
+    "drawing_id": "7ff4db08a21548398a96f5737a56bc6e",
+    "session_id": "ses_f3dbe4093ffeF1VRVof4xDpz4R",
+    "initial_revision": "r0001",
+    "final_revision": "r0002",
+    "tools_completed": [
+      "cad_summary",
+      "cad_query_entities",
+      "cad_apply_operations",
+      "cad_read_entities",
+      "cad_render_region"
+    ],
+    "native_text_verified": "DEMO UPDATED",
+    "unrelated_polyline_unchanged": true,
+    "png_preview_verified": true,
+    "event_types": [
+      "connected",
+      "drawing.updated",
+      "job.updated",
+      "message.part.delta",
+      "message.part.updated",
+      "message.updated",
+      "session.diff",
+      "session.idle",
+      "session.status",
+      "session.updated"
+    ],
+    "drawing_updated_event_verified": true,
+    "mcp_png_attachment_verified": true
+  },
+  "transport_tests": {
+    "file": "tests/test_opencode.py",
+    "passed": 18,
+    "includes_session_binding": true
+  },
+  "permission": {
+    "*": "deny",
+    "cad_*": "allow"
+  },
+  "real_project_data_sent_to_model": false
+}

@@ -1,0 +1,148 @@
+"""HTTP transport for the actual OpenCode agent host; no local model loop."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from collections.abc import AsyncIterator, Iterable
+from typing import Any
+from urllib.parse import quote
+
+import httpx
+
+
+class OpenCodeError(RuntimeError):
+    """A credential-safe upstream error suitable for the business API."""
+
+    def __init__(self, message: str, status_code: int = 502):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def event_session_id(event: dict[str, Any]) -> str | None:
+    """Extract ownership from released OpenCode event shapes, never from text."""
+    properties = event.get("properties") or {}
+    if properties.get("sessionID"):
+        return str(properties["sessionID"])
+    for field in ("part", "info"):
+        value = properties.get(field) or {}
+        if value.get("sessionID"):
+            return str(value["sessionID"])
+    if event.get("type") in {"session.created", "session.updated", "session.deleted"}:
+        return (properties.get("info") or {}).get("id")
+    return None
+
+
+class OpenCodeClient:
+    def __init__(
+        self,
+        settings: Any = None,
+        *,
+        base_url: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        directory: str | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        def setting(name: str, default: Any) -> Any:
+            return getattr(settings, name, default) if settings is not None else default
+
+        def secret(value: Any) -> str:
+            return value.get_secret_value() if hasattr(value, "get_secret_value") else str(value)
+
+        self._client = httpx.AsyncClient(
+            base_url=(base_url or setting("opencode_base_url", "http://127.0.0.1:4096")).rstrip("/"),
+            auth=httpx.BasicAuth(
+                username or setting("opencode_server_username", "opencode"),
+                secret(password if password is not None else setting("opencode_server_password", "")),
+            ),
+            timeout=httpx.Timeout(45.0, connect=5.0),
+            transport=transport,
+            trust_env=False,
+            params={"directory": directory} if directory else None,
+        )
+
+    async def close(self) -> None:
+        await self._client.aclose()
+
+    async def __aenter__(self) -> OpenCodeClient:
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        await self.close()
+
+    async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        try:
+            response = await self._client.request(method, path, **kwargs)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            message = "OpenCode 认证失败，请检查服务密码" if exc.response.status_code == 401 else f"OpenCode 请求失败（HTTP {exc.response.status_code}）"
+            raise OpenCodeError(message) from exc
+        except httpx.RequestError as exc:
+            raise OpenCodeError("无法连接 OpenCode 服务，请检查服务是否启动", 503) from exc
+        if response.status_code == 204 or not response.content:
+            return None
+        return response.json()
+
+    async def health(self) -> dict[str, Any]:
+        return await self._request("GET", "/global/health")
+
+    async def create_session(self, title: str = "CAD 图纸对话") -> dict[str, Any]:
+        return await self._request("POST", "/session", json={"title": title})
+
+    async def messages(self, session_id: str) -> list[dict[str, Any]]:
+        return await self._request("GET", f"/session/{quote(session_id, safe='')}/message")
+
+    async def prompt_async(self, session_id: str, text: str, system: str | None = None) -> None:
+        payload: dict[str, Any] = {"agent": "cad", "parts": [{"type": "text", "text": text}]}
+        if system:
+            payload["system"] = system
+        await self._request("POST", f"/session/{quote(session_id, safe='')}/prompt_async", json=payload)
+
+    async def abort(self, session_id: str) -> bool:
+        return bool(await self._request("POST", f"/session/{quote(session_id, safe='')}/abort"))
+
+    async def session_status(self) -> dict[str, Any]:
+        return await self._request("GET", "/session/status")
+
+    async def providers(self) -> dict[str, Any]:
+        return await self._request("GET", "/provider")
+
+    async def mcp_status(self) -> dict[str, Any]:
+        return await self._request("GET", "/mcp")
+
+    async def events(
+        self,
+        session_ids: Iterable[str] | None = None,
+        *,
+        ready: asyncio.Event | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Close the upstream stream on disconnect; readiness precedes prompts.
+
+        OpenCode does not promise replay, so callers reconcile with messages().
+        With an ownership filter, global events are intentionally not forwarded.
+        """
+        allowed = set(session_ids) if session_ids is not None else None
+        timeout = httpx.Timeout(connect=5.0, read=None, write=30.0, pool=5.0)
+        try:
+            async with self._client.stream("GET", "/event", timeout=timeout) as response:
+                response.raise_for_status()
+                if ready is not None:
+                    ready.set()
+                data: list[str] = []
+                async for line in response.aiter_lines():
+                    if line.startswith("data:"):
+                        data.append(line[5:].lstrip(" "))
+                    elif not line and data:
+                        try:
+                            event = json.loads("\n".join(data))
+                        except json.JSONDecodeError:
+                            data.clear()
+                            continue
+                        data.clear()
+                        if isinstance(event, dict) and (allowed is None or event_session_id(event) in allowed):
+                            yield event
+        except httpx.HTTPStatusError as exc:
+            raise OpenCodeError(f"OpenCode 事件订阅失败（HTTP {exc.response.status_code}）") from exc
+        except httpx.RequestError as exc:
+            raise OpenCodeError("OpenCode 事件连接已断开，可重连恢复历史", 503) from exc
