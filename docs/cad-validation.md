@@ -5,7 +5,7 @@
 ## 环境
 
 - Python 3.12，ezdxf 1.4.4，ODA File Converter 27.1.0.0。
-- ODA AppImage 解包到 `.tools/oda/squashfs-root`，入口为 `.tools/oda/ODAFileConverter`。
+- ODA AppImage 解包到 `cad_converter/runtime/squashfs-root`，入口为 `cad_converter/run.sh`。
 - 当前安装包只有 Qt xcb 插件，使用 WSLg 的 `DISPLAY=:0`。文件系统沙箱阻止访问显示套接字时转换无法启动；在正常主机进程中已验证成功。无桌面服务器需安装 Xvfb 并启用 `ODA_USE_XVFB`。
 - 初次验收采用 `DroidSansFallbackFull.ttf`；后续已改用项目携带的 Noto 中文字体和字符覆盖检查，见 [字体修复记录](font-compatibility.md)。原 DXF 字体样式不被改写。
 

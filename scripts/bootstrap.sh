@@ -21,10 +21,8 @@ pathlib.Path('.tools/node').symlink_to('node-v24.21.0-linux-x64', target_is_dire
 PY
 fi
 uv sync --frozen
-mkdir -p .tools/opencode
-cp tooling/opencode/package.json tooling/opencode/package-lock.json .tools/opencode/
-npm ci --prefix .tools/opencode
+bash agent/install.sh
 npm ci --prefix frontend
 npm run build --prefix frontend
 .venv/bin/python scripts/configure_env.py
-echo '依赖安装完成。DWG 转换器安装：bash scripts/install_oda.sh；启动：bash scripts/dev.sh'
+echo '依赖安装完成。DWG 转换器安装：bash cad_converter/install.sh；启动：bash scripts/dev.sh'

@@ -2,7 +2,6 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
@@ -13,18 +12,19 @@ from .api import chat, drawings, internal
 from .config import ROOT, Settings, get_settings
 from .events import EventBus
 from .jobs import JobConflict, JobManager
-from .opencode_client import OpenCodeClient, OpenCodeError, event_session_id
+from agent.client import AgentClient, AgentError, event_session_id
+from agent.runtime import WORKSPACE
 from .store import Store
 
 logger = logging.getLogger(__name__)
 
 
-async def opencode_events(app):
+async def agent_events(app):
     state = app.state
     visible_ids = set()
     while True:
         try:
-            async for event in state.opencode.events(ready=state.opencode_ready):
+            async for event in state.agent.events(ready=state.agent_ready):
                 session_id = event_session_id(event)
                 if not session_id or not state.store.one("SELECT id FROM sessions WHERE id=?", (session_id,)):
                     continue
@@ -57,13 +57,13 @@ async def opencode_events(app):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.debug("OpenCode event connection unavailable: %s", type(exc).__name__)
+            logger.debug("Agent event connection unavailable: %s", type(exc).__name__)
         finally:
-            state.opencode_ready.clear()
+            state.agent_ready.clear()
         await asyncio.sleep(2)
 
 
-def create_app(settings: Settings | None = None, opencode_client=None):
+def create_app(settings: Settings | None = None, agent_client=None):
     settings = settings or get_settings()
 
     @asynccontextmanager
@@ -78,16 +78,16 @@ def create_app(settings: Settings | None = None, opencode_client=None):
         app.state.bus = EventBus()
         app.state.jobs = JobManager(settings, app.state.store, app.state.bus)
         app.state.jobs.start()
-        app.state.opencode = opencode_client or OpenCodeClient(settings, directory=str(ROOT / ".runtime/opencode/workspace"))
-        app.state.opencode_ready = asyncio.Event()
-        events_task = asyncio.create_task(opencode_events(app))
+        app.state.agent = agent_client or AgentClient(settings, directory=str(WORKSPACE))
+        app.state.agent_ready = asyncio.Event()
+        events_task = asyncio.create_task(agent_events(app))
         try:
             yield
         finally:
             events_task.cancel()
             await asyncio.gather(events_task, return_exceptions=True)
             await app.state.jobs.close()
-            await app.state.opencode.close()
+            await app.state.agent.close()
 
     app = FastAPI(title="CAD Agent", version="0.1.0", lifespan=lifespan)
 
@@ -104,18 +104,18 @@ def create_app(settings: Settings | None = None, opencode_client=None):
     async def conflict_handler(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=409)
 
-    @app.exception_handler(OpenCodeError)
-    async def opencode_handler(request, exc):
+    @app.exception_handler(AgentError)
+    async def agent_handler(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
 
     @app.get("/api/health")
     async def health(request: Request):
         try:
-            upstream = await asyncio.wait_for(app.state.opencode.health(), 2)
+            upstream = await asyncio.wait_for(app.state.agent.health(), 2)
             connected = bool(upstream.get("healthy", True))
         except Exception:
             connected = False
-        return {"status": "ok", "opencode": "connected" if connected else "disconnected", "dwg_available": Path(settings.cad_settings()["oda_executable"]).is_file() if settings.oda_executable else False, "rag": "not_configured", "max_upload_mb": settings.cad_max_upload_mb}
+        return {"status": "ok", "agent": "connected" if connected else "disconnected", "dwg_available": settings.converter_available, "rag": "not_configured", "max_upload_mb": settings.cad_max_upload_mb}
 
     app.include_router(drawings.router)
     app.include_router(chat.router)

@@ -23,13 +23,13 @@ frontend/playwright-report/
 coverage/
 .coverage*
 htmlcov/
-data/
+/data/
 tmp/
 *.log
 .DS_Store
 Thumbs.db
 .idea/
-.vscode/
+/.vscode/
 *.swp
 
 # Engineering drawings and fonts supplied privately by users

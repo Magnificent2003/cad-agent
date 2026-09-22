@@ -19,12 +19,12 @@ def main():
     parser.add_argument("--production", action="store_true", help="serve frontend/dist at :8000 instead of starting Vite")
     parser.add_argument("--without-agent", action="store_true", help="start CAD file/preview service without a model connection")
     args = parser.parse_args()
-    config = dotenv_values(ROOT / ".env")
+    config = {**dotenv_values(ROOT / ".env"), **os.environ}
     api = urlsplit(config.get("CAD_API_BASE_URL") or "http://127.0.0.1:8000")
-    oc = urlsplit(config.get("OPENCODE_BASE_URL") or "http://127.0.0.1:4096")
+    agent = urlsplit(config.get("AGENT_BASE_URL") or config.get("OPENCODE_BASE_URL") or "http://127.0.0.1:4096")
     if api.hostname not in {"127.0.0.1", "localhost", "::1"}:
         raise SystemExit("首期服务只允许本机绑定。")
-    ports = [api.port or 8000] + ([] if args.without_agent else [oc.port or 4096]) + ([] if args.production else [5173])
+    ports = [api.port or 8000] + ([] if args.without_agent else [agent.port or 4096]) + ([] if args.production else [5173])
     for port in ports:
         with socket.socket() as probe:
             if probe.connect_ex(("127.0.0.1", port)) == 0:
@@ -37,7 +37,7 @@ def main():
     python = str(ROOT / ".venv/bin/python")
     commands = [[python, "-m", "uvicorn", "backend.app.main:app", "--host", api.hostname or "127.0.0.1", "--port", str(api.port or 8000), "--workers", "1"]]
     if not args.without_agent:
-        commands.append([python, "scripts/start_opencode.py"])
+        commands.append([python, "-m", "agent.launcher"])
     if not args.production:
         commands.append([str(ROOT / ".tools/node/bin/npm"), "run", "dev", "--prefix", "frontend"])
     processes = []
@@ -49,7 +49,7 @@ def main():
             child_env = dict(env)
             if "frontend" in command:
                 for key in tuple(child_env):
-                    if key.startswith("DEEPSEEK_") or key in {"CAD_INTERNAL_TOKEN", "OPENCODE_SERVER_PASSWORD"}:
+                    if key.startswith("DEEPSEEK_") or key in {"CAD_INTERNAL_TOKEN", "AGENT_SERVER_PASSWORD", "OPENCODE_SERVER_PASSWORD"}:
                         child_env.pop(key)
             processes.append(subprocess.Popen(command, cwd=ROOT, env=child_env, start_new_session=True))
         print(f"打开 http://127.0.0.1:{api.port or 8000 if args.production else 5173}；Ctrl+C 停止全部服务。", flush=True)

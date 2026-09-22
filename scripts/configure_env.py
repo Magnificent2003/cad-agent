@@ -13,10 +13,16 @@ def main():
     if not target.exists():
         target.write_text(template.read_text(), encoding="utf-8")
     current = dotenv_values(target)
+    # Preserve credentials when upgrading a checkout with the old variable names.
+    for suffix in ("BASE_URL", "SERVER_USERNAME", "SERVER_PASSWORD"):
+        old, new = "OPENCODE_" + suffix, "AGENT_" + suffix
+        if not current.get(new) and current.get(old):
+            set_key(target, new, current[old])
+            current[new] = current[old]
     for key, value in dotenv_values(template).items():
         if key not in current:
             set_key(target, key, value or "")
-    for key in ("CAD_INTERNAL_TOKEN", "OPENCODE_SERVER_PASSWORD"):
+    for key in ("CAD_INTERNAL_TOKEN", "AGENT_SERVER_PASSWORD"):
         if not current.get(key):
             set_key(target, key, secrets.token_urlsafe(32))
     target.chmod(0o600)

@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "opencode-ai": "1.18.31"
+  },
+  "name": "cad-agent-service",
+  "private": true
+}

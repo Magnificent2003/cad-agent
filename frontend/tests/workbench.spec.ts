@@ -42,7 +42,7 @@ async function fixture(page: Page, options: { empty?: boolean; svgFails?: boolea
     requests.push(url.pathname + url.search)
     const respond = (data: unknown, status = 200) =>
       route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) })
-    if (url.pathname === '/api/health') return respond({ status: 'ok', opencode: 'connected' })
+    if (url.pathname === '/api/health') return respond({ status: 'ok', agent: 'connected' })
     if (url.pathname === '/api/drawings' && request.method() === 'POST') {
       imported = true
       importReady = false

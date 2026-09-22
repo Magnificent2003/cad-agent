@@ -1,13 +1,14 @@
 # 实际环境记录
 
-核验日期：2026-09-21。Ubuntu 24.04.4 / WSL2，x86_64；现有系统中文字体可用。依赖安装范围为本项目 `.tools/`、`.venv/`、`frontend/node_modules/`，没有替换系统解释器或 Windows Node。
+核验日期：2026-09-22。Ubuntu 24.04.4 / WSL2，x86_64；现有系统中文字体可用。依赖安装范围为本项目 `.tools/`、`.venv/`、`agent/`、`cad_converter/runtime/`、`frontend/node_modules/`，没有替换系统解释器或 Windows Node。
 
 | 组件 | 实际版本 |
 | --- | --- |
 | Python | 3.12.3，来自 `/usr/bin/python3.12` |
 | uv | 0.12.17 |
 | Node.js | 24.21.0，Linux x64 |
-| OpenCode | 1.18.31 |
+| 智能体引擎（OpenCode 来源） | 1.18.31；本地源码显示 local |
+| Bun（源码运行） | 1.3.14 |
 | DeepSeek API 模型 | deepseek-flash |
 | MCP Python SDK | 2.2.0，MCPServer |
 | FastAPI / Uvicorn | 0.141.1 / 0.53.0 |
@@ -17,7 +18,7 @@
 | ODA File Converter | 27.1.0.0，官方 Qt6 AppImage |
 | Vite | 7.3.6 |
 
-Python 依赖以 `uv.lock` 为准；前端以 `frontend/package-lock.json` 为准；OpenCode 以 `tooling/opencode/package-lock.json` 为准。`scripts/env.sh` 将本地工具加入当前 shell PATH，不会加载 `.env` 或输出密钥。
+Python 依赖以 `uv.lock` 为准；前端以 `frontend/package-lock.json` 为准；OpenCode 以 `agent/package-lock.json`；源码模式见 `agent/source.lock.json` 与 `agent/engine/bun.lock` 为准。`scripts/env.sh` 将本地工具加入当前 shell PATH，不会加载 `.env` 或输出密钥。
 
 Node 官方下载包已按同目录 `SHASUMS256.txt` 核对。ODA 下载文件的 SHA-256 为 `cb77a106354af98a1d355ba0191160aca3f90cb020946803e7c8132cba434dfc`；该记录用于此次下载产物复核，不冒充独立官方签名。
 
@@ -28,8 +29,9 @@ Node 官方下载包已按同目录 `SHASUMS256.txt` 核对。ODA 下载文件�
 | DEEPSEEK_API_KEY / BASE_URL / MODEL | 后端模型配置；模型调用只由 OpenCode 负责 |
 | CAD_API_BASE_URL | MCP 访问本地 API，默认 8000 |
 | CAD_INTERNAL_TOKEN | 内部 CAD API Bearer 令牌，安装时生成 |
-| OPENCODE_BASE_URL | 本地 OpenCode 地址，默认 4096 |
-| OPENCODE_SERVER_USERNAME / PASSWORD | OpenCode HTTP/SSE BasicAuth |
+| AGENT_BASE_URL | 本地 OpenCode 地址，默认 4096 |
+| AGENT_SERVER_USERNAME / PASSWORD | OpenCode HTTP/SSE BasicAuth |
+| AGENT_RUNTIME | release 为发行程序，source 为本项目引擎源码 |
 | CAD_DATA_DIR | 图纸与 SQLite 目录，相对路径以项目根目录解析 |
 | ODA_EXECUTABLE | 转换器入口；相对路径由服务解析成绝对路径 |
 | ODA_USE_XVFB | 无显示环境时通过 xvfb-run 启动转换器 |

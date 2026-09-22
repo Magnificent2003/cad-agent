@@ -1,0 +1,45 @@
+{
+  "repository": "https://github.com/anomalyco/opencode",
+  "tag": "v1.18.31",
+  "commit": "014614d35b397775e5d397a490fc72368c894ec2",
+  "license": "MIT",
+  "source_directory": "agent/engine",
+  "archive_url": "https://codeload.github.com/anomalyco/opencode/tar.gz/014614d35b397775e5d397a490fc72368c894ec2",
+  "archive_sha256": "caf2d4510fb6de729400589143248414776bd6157e38eda27e77e1c74a60fb3b",
+  "manifest_sha256": {
+    "package.json": "b1aa48ddbe8074072e308daf98e30eba2596fd2ad479bbbe061d04504b7a757e",
+    "bun.lock": "0b2900f5353569f871b55346ddcbd1a6ddceb7577295bba5a38480a6d94c3161",
+    "packages/opencode/package.json": "778160ff537cfb76b0abdb160292e48268f1d900a29e8e9276863b67d0fca19d"
+  },
+  "bun": {
+    "version": "1.3.14",
+    "release_url": "https://github.com/oven-sh/bun/releases/tag/bun-v1.3.14",
+    "checksums_url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/SHASUMS256.txt",
+    "archive_sha256": {
+      "bun-linux-x64.zip": "951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f",
+      "bun-linux-aarch64.zip": "a27ffb63a8310375836e0d6f668ae17fa8d8d18b88c37c821c65331973a19a3b",
+      "bun-darwin-x64.zip": "4183df3374623e5bab315c547cfa0974533cd457d86b73b639f7a87974cd6633",
+      "bun-darwin-aarch64.zip": "d8b96221828ad6f97ac7ac0ab7e95872341af763001e8803e8267652c2652620"
+    }
+  },
+  "install_workspaces": [
+    "packages/opencode",
+    "packages/core",
+    "packages/codemode",
+    "packages/llm",
+    "packages/plugin",
+    "packages/protocol",
+    "packages/schema",
+    "packages/script",
+    "packages/sdk/js",
+    "packages/server",
+    "packages/tui",
+    "packages/ui",
+    "packages/http-recorder",
+    "packages/effect-drizzle-sqlite",
+    "packages/effect-sqlite-node"
+  ],
+  "local_adjustments": [
+    "Only .gitignore exceptions to preserve files already tracked in the upstream archive; no TypeScript engine logic changed."
+  ]
+}

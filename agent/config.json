@@ -1,0 +1,51 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "deepseek-cad/deepseek-flash",
+  "small_model": "deepseek-cad/deepseek-flash",
+  "default_agent": "cad",
+  "autoupdate": false,
+  "share": "disabled",
+  "snapshot": false,
+  "enabled_providers": ["deepseek-cad"],
+  "agent": {
+    "cad": {
+      "description": "CAD 图纸助手",
+      "mode": "primary",
+      "prompt": "{file:./prompts/cad.txt}"
+    }
+  },
+  "provider": {
+    "deepseek-cad": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "DeepSeek CAD",
+      "options": {
+        "baseURL": "{env:DEEPSEEK_BASE_URL}",
+        "apiKey": "{env:DEEPSEEK_API_KEY}"
+      },
+      "models": {
+        "deepseek-flash": {
+          "name": "DeepSeek Flash",
+          "attachment": true,
+          "tool_call": true,
+          "reasoning": true,
+          "modalities": {"input": ["text", "image"], "output": ["text"]},
+          "interleaved": {"field": "reasoning_content"},
+          "limit": {"context": 131072, "output": 8192}
+        }
+      }
+    }
+  },
+  "mcp": {
+    "cad": {
+      "type": "local",
+      "command": [".venv/bin/python", "-m", "cad_mcp.launcher"],
+      "enabled": true,
+      "timeout": 300000,
+      "environment": {
+        "CAD_API_BASE_URL": "{env:CAD_API_BASE_URL}",
+        "CAD_INTERNAL_TOKEN": "{env:CAD_INTERNAL_TOKEN}"
+      }
+    }
+  },
+  "permission": {"*": "deny", "cad_*": "allow"}
+}

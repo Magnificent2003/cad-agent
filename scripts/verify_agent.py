@@ -20,12 +20,14 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from backend.app.opencode_client import OpenCodeClient, OpenCodeError  # noqa: E402
-from scripts.start_opencode import build_config  # noqa: E402
+from agent.client import AgentClient, AgentError  # noqa: E402
+from agent.launcher import build_config  # noqa: E402
+from agent.runtime import engine_command, engine_environment, normalize_environment  # noqa: E402
 
 
-def client_for(env: dict[str, str], base_url: str | None = None) -> OpenCodeClient:
-    return OpenCodeClient(base_url=base_url or env.get("OPENCODE_BASE_URL", "http://127.0.0.1:4096"), username=env.get("OPENCODE_SERVER_USERNAME", "opencode"), password=env.get("OPENCODE_SERVER_PASSWORD", ""))
+def client_for(env: dict[str, str], base_url: str | None = None) -> AgentClient:
+    env = normalize_environment(env)
+    return AgentClient(base_url=base_url or env.get("AGENT_BASE_URL", "http://127.0.0.1:4096"), username=env.get("AGENT_SERVER_USERNAME", "cad-agent"), password=env.get("AGENT_SERVER_PASSWORD", ""))
 
 
 async def diagnostics(env: dict[str, str]) -> None:
@@ -147,9 +149,9 @@ async def exercise_vision(env: dict[str, str], port: int, timeout: int) -> dict:
             try:
                 health = await client.health()
                 break
-            except OpenCodeError:
+            except AgentError:
                 if time.monotonic() >= deadline:
-                    raise RuntimeError("合成验收 OpenCode 服务未能启动；检查 .runtime/vision-smoke/server.log")
+                    raise RuntimeError("合成验收 智能体 服务未能启动；检查 .runtime/vision-smoke/server.log")
                 await asyncio.sleep(0.5)
         mcp_status = await client.mcp_status()
         if (mcp_status.get("cad") or {}).get("status") != "connected":
@@ -179,14 +181,14 @@ async def exercise_vision(env: dict[str, str], port: int, timeout: int) -> dict:
                     if '"verified": true' in output or '"verified":true' in output:
                         if not rendered:
                             raise RuntimeError("视觉校验没有对应的图片工具调用")
-                        return {"passed": True, "opencode": health, "model": env.get("DEEPSEEK_MODEL", "deepseek-flash"), "data": "synthetic PNG only", "image_tool": "cad_render_region", "followup_tool": "cad_verify_visual", "session_id": session["id"], "event_types": sorted(event_types)}
+                        return {"passed": True, "agent": health, "model": env.get("DEEPSEEK_MODEL", "deepseek-flash"), "data": "synthetic PNG only", "image_tool": "cad_render_region", "followup_tool": "cad_verify_visual", "session_id": session["id"], "event_types": sorted(event_types)}
                 assistant_done = any(message.get("info", {}).get("role") == "assistant" and message.get("info", {}).get("time", {}).get("completed") and message.get("info", {}).get("finish") not in {None, "tool-calls", "unknown"} for message in history)
                 if assistant_done:
                     raise RuntimeError("模型已结束但未通过图片识别后的工具校验；不能宣称图片通道可用")
                 errors = [message.get("info", {}).get("error") for message in history if message.get("info", {}).get("error")]
                 if errors:
                     name = errors[-1].get("name", "unknown") if isinstance(errors[-1], dict) else "unknown"
-                    raise RuntimeError(f"模型验收失败（{name}）；详情保留在本地 OpenCode 会话中")
+                    raise RuntimeError(f"模型验收失败（{name}）；详情保留在本地 智能体 会话中")
                 await asyncio.sleep(1)
             await client.abort(session["id"])
             raise RuntimeError("视觉验收超时，已停止合成会话")
@@ -197,32 +199,21 @@ async def exercise_vision(env: dict[str, str], port: int, timeout: int) -> dict:
 
 
 def vision(env: dict[str, str], port: int, timeout: int) -> None:
-    required = [name for name in ("DEEPSEEK_API_KEY", "OPENCODE_SERVER_PASSWORD") if not env.get(name)]
+    env = normalize_environment(env)
+    required = [name for name in ("DEEPSEEK_API_KEY", "AGENT_SERVER_PASSWORD") if not env.get(name)]
     if required:
         raise RuntimeError("缺少环境变量：" + ", ".join(required))
-    executable = ROOT / ".tools" / "opencode" / "node_modules" / ".bin" / "opencode"
-    if not executable.is_file():
-        raise RuntimeError("请先安装项目固定版本的 OpenCode")
+    command = engine_command(env)
     runtime = ROOT / ".runtime" / "vision-smoke"
     runtime.mkdir(parents=True, exist_ok=True)
     config = build_config(env)
     config["agent"]["cad"]["prompt"] = "你是合成图片验收助手。仅通过工具读取图片并校验图中文字和形状，不猜测、不调用其他工具。"
     config["mcp"]["cad"] = {"type": "local", "enabled": True, "command": [str(ROOT / ".venv" / "bin" / "python"), "-m", "cad_mcp.vision_smoke"], "environment": {"PYTHONPATH": str(ROOT), "CAD_SMOKE_CODE": str(secrets.randbelow(9000) + 1000), "CAD_SMOKE_CIRCLES": str(secrets.randbelow(4) + 1)}, "timeout": 60000}
-    child_env = dict(env)
-    for name, directory in (("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"), ("XDG_CACHE_HOME", "cache"), ("XDG_STATE_HOME", "state")):
-        target = runtime / directory
-        target.mkdir(parents=True, exist_ok=True)
-        child_env[name] = str(target)
-    child_env["PATH"] = str(ROOT / ".tools" / "node" / "bin") + os.pathsep + env.get("PATH", "")
-    child_env["OPENCODE_SERVER_USERNAME"] = env.get("OPENCODE_SERVER_USERNAME", "opencode")
-    child_env["OPENCODE_CONFIG_CONTENT"] = json.dumps(config, ensure_ascii=False)
-    child_env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "true"
-    child_env["OPENCODE_DISABLE_CLAUDE_CODE"] = "true"
-    child_env["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "true"
+    child_env = engine_environment(env, config, runtime)
     workspace = runtime / "workspace"
     workspace.mkdir(exist_ok=True)
     with (runtime / "server.log").open("w", encoding="utf-8") as log:
-        process = subprocess.Popen([str(executable), "serve", "--hostname", "127.0.0.1", "--port", str(port)], cwd=workspace, env=child_env, stdout=log, stderr=log, start_new_session=True)
+        process = subprocess.Popen([*command, "serve", "--hostname", "127.0.0.1", "--port", str(port)], cwd=workspace, env=child_env, stdout=log, stderr=log, start_new_session=True)
         try:
             report = asyncio.run(exercise_vision(child_env, port, timeout))
             (runtime / "result.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -240,8 +231,8 @@ def vision(env: dict[str, str], port: int, timeout: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--vision", action="store_true", help="use a separate OpenCode instance and billable DeepSeek call on a generated test PNG")
-    parser.add_argument("--cad", action="store_true", help="use the running API and OpenCode to edit a generated synthetic DXF (billable model calls)")
+    parser.add_argument("--vision", action="store_true", help="use a separate 智能体 instance and billable DeepSeek call on a generated test PNG")
+    parser.add_argument("--cad", action="store_true", help="use the running API and 智能体 to edit a generated synthetic DXF (billable model calls)")
     parser.add_argument("--port", type=int, default=4097)
     parser.add_argument("--timeout", type=int, default=240)
     args = parser.parse_args()
@@ -255,7 +246,7 @@ def main() -> None:
             vision(dict(os.environ), args.port, args.timeout)
         else:
             asyncio.run(diagnostics(dict(os.environ)))
-    except (RuntimeError, OpenCodeError) as exc:
+    except (RuntimeError, AgentError) as exc:
         raise SystemExit(str(exc)) from None
 
 

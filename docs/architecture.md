@@ -3,7 +3,7 @@
 ```mermaid
 flowchart LR
   UI[React 工作台] --> API[FastAPI]
-  API --> OC[OpenCode Server]
+  API --> OC[agent 智能体组件]
   OC --> DS[DeepSeek]
   OC --> MCP[CAD MCP stdio]
   MCP -->|Bearer token| API
@@ -57,4 +57,10 @@ RAG 默认返回 `not_configured`。`ClauseEvidence`、`ConstraintSpec`、`Check
 
 这是单用户本机原型，API 必须使用一个 Uvicorn 服务进程。多个 worker 会各自持有队列，无法满足此版本的一致性约束。任务队列在内存，记录在 SQLite；重启后需明确重试。大图耗时工作在隔离 CAD 进程，健康检查与对话事件无需等待 CAD 完成。
 
-OpenCode 对话数据库保存在 `.runtime/opencode/`，与 CAD SQLite 中的会话映射共同组成历史；不要仅复制其中一个目录来迁移会话。
+OpenCode 对话数据库保存在 `.runtime/agent/`，与 CAD SQLite 中的会话映射共同组成历史；不要仅复制其中一个目录来迁移会话。
+
+## 组件边界
+
+智能体配置、启动、通信适配和固定来源引擎源码统一在 `agent/`。`backend` 通过 `agent/client.py` 访问服务，项目配置使用 `AGENT_*`；上游要求的环境变量只在 `agent/runtime.py` 做适配。`cad_converter/` 提供项目维护的安装/运行脚本，二进制放在忽略版本控制的 `runtime/`。CAD MCP 和原生操作仍分别在 `cad_mcp/`、`backend/app/cad/`。
+
+`agent/engine/` 是引擎源码，`agent/node_modules/` 是发行程序；修改前者需使用 source 模式。源码和发行版显式使用同一个会话数据库，历史工作目录由兼容符号链接保留。架构整理没有新增删除、裁剪或另存工具，相关计划见 [CAD 能力诊断](cad-roadmap.md)。

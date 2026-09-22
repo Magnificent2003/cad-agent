@@ -8,11 +8,11 @@ from fastapi.testclient import TestClient
 
 from backend.app.config import Settings
 from backend.app.main import create_app
-from backend.app.opencode_client import OpenCodeError
+from agent.client import AgentError
 from backend.app.store import Store, encode, now
 
 
-class OfflineOpenCode:
+class OfflineAgent:
     async def health(self):
         return {"healthy": False}
 
@@ -30,13 +30,13 @@ class OfflineOpenCode:
         return {"stopping-session": {"type": "busy"}}
 
     async def abort(self, session_id):
-        raise OpenCodeError("Connection unavailable", 503)
+        raise AgentError("Connection unavailable", 503)
 
 
 @pytest.fixture
 def client(tmp_path):
     settings = Settings(_env_file=None, cad_data_dir=tmp_path, cad_internal_token="test-token", oda_executable="", cad_preview_dpi=72)
-    with TestClient(create_app(settings, OfflineOpenCode())) as client:
+    with TestClient(create_app(settings, OfflineAgent())) as client:
         yield client
 
 

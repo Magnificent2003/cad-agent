@@ -17,16 +17,16 @@
 先按 README 启动 FastAPI 与正式 OpenCode，再运行：
 
 ```bash
-.venv/bin/python scripts/start_opencode.py --check
+bash agent/start.sh --check
 .venv/bin/python scripts/verify_agent.py
 .venv/bin/python scripts/verify_agent.py --vision
 .venv/bin/python scripts/verify_agent.py --cad
-.venv/bin/python -m pytest tests/test_opencode.py -q
+.venv/bin/python -m pytest tests/test_agent.py -q
 ```
 
 默认诊断只访问本机接口。`--vision` 和 `--cad` 使用真实 DeepSeek API，会产生少量调用费用。`--vision` 使用独立的 4097 端口并在结束后关闭该实例；`--cad` 使用已运行的 8000/4096 服务，在应用中保留可查看的合成图纸及版本记录。
 
-`tests/test_opencode.py` 的 **18 个测试**覆盖 HTTP 与 SSE BasicAuth、异步提交、会话归属过滤、多行 SSE 与心跳处理、断连释放上游连接、错误信息避免回显上游正文，以及 MCP PNG 字节、局部图 URL 参数保留、即时 DXF 导出和所有排队工具的会话绑定。
+`tests/test_agent.py` 的 **18 个测试**覆盖 HTTP 与 SSE BasicAuth、异步提交、会话归属过滤、多行 SSE 与心跳处理、断连释放上游连接、错误信息避免回显上游正文，以及 MCP PNG 字节、局部图 URL 参数保留、即时 DXF 导出和所有排队工具的会话绑定。
 
 产物保存在被 Git 忽略的 `.runtime/vision-smoke/` 与 `.runtime/agent-cad-smoke/`。服务凭据只从本地环境读取；报告不记录凭据、鉴权头或模型推理正文。
 
