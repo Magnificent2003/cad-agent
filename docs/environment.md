@@ -1,6 +1,6 @@
 # 实际环境记录
 
-核验日期：2026-09-22。Ubuntu 24.04.4 / WSL2，x86_64；现有系统中文字体可用。依赖安装范围为本项目 `.tools/`、`.venv/`、`agent/`、`cad_converter/runtime/`、`frontend/node_modules/`，没有替换系统解释器或 Windows Node。
+核验日期：2026-09-22。Ubuntu 24.04.4 / WSL2，x86_64；现有系统中文字体可用。依赖安装范围为本项目 `.tools/`、`.venv/`、`agent/`、`cad_converter/runtime/`、`freecad/`、`frontend/node_modules/`，没有替换系统解释器或 Windows Node。
 
 | 组件 | 实际版本 |
 | --- | --- |
@@ -16,11 +16,19 @@
 | Shapely | 2.1.2 |
 | Matplotlib / Pillow | 3.11.2 / 12.3.0 |
 | ODA File Converter | 27.1.0.0，官方 Qt6 AppImage |
+| FreeCAD（独立文件实验） | 1.1.3，官方 Linux x86_64 AppImage，自带 Python 3.11 |
+| FreeCAD MCP | 0.1.24，源码提交 `751974609a401660a58a1772ef16f3afbeba9ba1` |
+| FreeCAD MCP 的 Python / SDK | 独立 Python 3.12.3 / MCP 1.30.0，按上游 uv.lock |
+| Draft DXF 可选库 | 1.42，固定提交及逐文件哈希见 `freecad/dxf-library.lock.json` |
 | Vite | 7.3.6 |
 
 Python 依赖以 `uv.lock` 为准；前端以 `frontend/package-lock.json` 为准；OpenCode 以 `agent/package-lock.json`；源码模式见 `agent/source.lock.json` 与 `agent/engine/bun.lock` 为准。`scripts/env.sh` 将本地工具加入当前 shell PATH，不会加载 `.env` 或输出密钥。
 
 Node 官方下载包已按同目录 `SHASUMS256.txt` 核对。ODA 下载文件的 SHA-256 为 `cb77a106354af98a1d355ba0191160aca3f90cb020946803e7c8132cba434dfc`；该记录用于此次下载产物复核，不冒充独立官方签名。
+
+FreeCAD 下载包按官方 GitHub Release 的 SHA-256 校验，记录见 `freecad/runtime.lock.json`。插件通过软链接加载 `freecad/mcp/addon/FreeCADMCP` 源码，实际插件目录为 `.runtime/freecad/data/FreeCAD/v1-1/Mod/`。运行方法见 [FreeCAD 实验说明](../freecad/README.md)。
+
+FreeCAD 图形进程和插件 RPC（9875）、实验智能体（4097）分别启动；原网页服务仍使用 5173/8000/4096。FreeCAD 实验复用现有模型环境变量，本次没有新增 `.env` 配置字段。
 
 ## 环境变量
 

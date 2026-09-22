@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# FreeCAD detects this converter by the literal ODAFileConverter in its path.
+set -euo pipefail
+component_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+exec bash "$component_root/../cad_converter/run.sh" "$@"

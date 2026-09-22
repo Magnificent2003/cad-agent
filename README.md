@@ -2,7 +2,7 @@
 
 这是一个在本机运行的 CAD 工作台：浏览器负责看图和对话，后端管理图纸与版本，智能体调用模型和 CAD 工具。当前支持 DWG/DXF 上传、SVG 预览、查询、基础编辑和版本追溯。
 
-## 1. 先认识五个组件
+## 1. 先认识项目组件
 
 ```text
 cad-agent/
@@ -17,6 +17,11 @@ cad-agent/
 │   ├── engine/           固定版本的 TypeScript 引擎源码，纳入版本控制
 │   └── node_modules/     安装好的发行程序，不作为开发源码
 ├── cad_mcp/              将 CAD 功能暴露为模型可调用的工具
+├── freecad/              FreeCAD MCP 文件操作实验，独立于现有网页流程
+│   ├── mcp/              克隆的上游源码（Git 子模块），可以直接修改
+│   ├── install.sh        安装 FreeCAD、MCP 依赖和插件
+│   ├── start.sh          启动 FreeCAD 和原版插件服务
+│   └── runtime/          官方 FreeCAD 程序，不提交 Git
 ├── cad_converter/        DWG/DXF 转换组件
 │   ├── install.sh        安装第三方转换器
 │   ├── run.sh            本项目维护的转换器调用入口
@@ -40,6 +45,7 @@ cad-agent/
 | 助手如何描述任务、何时提问 | `agent/prompts/cad.txt` |
 | 模型连接、工具配置、启动方式 | `agent/config.json`、`launcher.py`、`runtime.py` |
 | 模型循环、上下文处理、引擎内部机制 | `agent/engine/`，入口见 [智能体开发说明](agent/README.md) |
+| AI 自主编写 Python 操作 FreeCAD 文件 | `freecad/mcp/`、`agent/freecad_experiment.py` 和对应提示词 |
 | DWG 转换器安装与调用 | `cad_converter/` 和 `backend/app/cad/converter.py` |
 
 ## 2. 一次对话如何执行
@@ -150,6 +156,9 @@ AGENT_RUNTIME=source bash scripts/dev.sh
 | `agent/node_modules/` | 已安装的智能体发行程序 | 可重装：`bash agent/install.sh` |
 | `agent/engine/**/node_modules/` | 源码模式的依赖 | 可重装：`bash agent/install.sh --source` |
 | `cad_converter/runtime/` | ODA 二进制及运行库 | 可重装：`bash cad_converter/install.sh` |
+| `freecad/mcp/` | 可修改的 FreeCAD MCP 上游源码 | 用 `git submodule update --init -- freecad/mcp` 恢复固定提交 |
+| `freecad/runtime/`、`freecad/mcp/.venv/` | FreeCAD 程序和独立 MCP 依赖 | 可重装：`bash freecad/install.sh` |
+| `.runtime/freecad/`、`.runtime/freecad-agent/` | FreeCAD 配置、实验会话、图纸副本及输出 | 含实验结果，按需备份 |
 | `.tools/` | Node、uv、Bun、GitHub CLI 等开发工具 | 不是纯缓存；删除后相应命令不可用，需重装 |
 | `.venv/`、`frontend/node_modules/` | Python / 前端依赖 | 可按锁文件重装 |
 | `.cache/` | 下载、依赖及测试浏览器缓存 | 可按需清理；测试浏览器删除后需重新安装 |
@@ -167,7 +176,9 @@ AGENT_RUNTIME=source bash scripts/dev.sh
 
 已有：读取原生文字与坐标、分页查询、改文字、平移指定实体、新增文字/矩形/折线、导出 DXF/DWG、创建修订版本、按明确规则检查几何。
 
-尚未实现：删除实体、按图框裁剪、另存为独立图纸记录、完整递归查询块内对象、图框识别和点选、天正专有对象编辑。增加权限或只改提示词不会补齐这些实现。首期没有安装 FreeCAD MCP，使用的是自建 CAD MCP + ezdxf；原因和下一步见 [CAD 能力诊断与计划](docs/cad-roadmap.md)。
+上述**网页流程**尚未实现删除实体、按图框裁剪、另存为独立图纸记录、完整递归查询块内对象、图框识别和点选、天正专有对象编辑。
+
+现在另有 [FreeCAD MCP 实验入口](freecad/README.md)：直接连接现成 MCP，允许模型通过 `execute_code` 自主编写 Python 完成文件操作。实验服务使用 **4097**，与网页使用的 **4096** 分开；输出先保存为 DXF/DWG/FCStd 文件，不会自动出现在网页版本列表。后续依据实际兼容性和修改效果再做产品接入，见 [CAD 能力诊断与计划](docs/cad-roadmap.md)。
 
 预览支持中文回退字体和旧式文字编码，已上传图纸可按新字体配置更新预览缓存。天正对象只按可用代理图形显示，不能保证专业对象保真编辑；详见 [字体兼容记录](docs/font-compatibility.md)。规范 RAG 尚未接入，不能宣称完成真实规范审查。
 
@@ -190,6 +201,8 @@ python scripts/verify_cad.py 'samples/private/白桥室外施工图纸/白桥二
 - [业务架构和接口](docs/architecture.md)
 - [架构重构记录](docs/refactor-validation.md)
 - [CAD 能力诊断与下一步](docs/cad-roadmap.md)
+- [FreeCAD 安装、源码修改与实验对话](freecad/README.md)
+- [FreeCAD 实际验收：AI 编辑与施工图兼容性](docs/freecad-validation.md)
 - [环境记录](docs/environment.md)
 - [CAD 验收](docs/cad-validation.md)、[模型链路验收](docs/agent-validation.md)、[前端验收](docs/frontend-validation.md)
 - [初始部署指南](CAD-Agent_Phase1_Deployment_Guide.md)：保留为方案背景，实际目录与启动命令以本 README 为准

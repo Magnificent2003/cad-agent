@@ -1,0 +1,45 @@
+{
+  "repository": "https://github.com/yorikvanhavre/Draft-dxf-importer",
+  "commit": "e060ef0d8fe7143c2e0ce34734b686ba073f3cc1",
+  "library_version": "1.42",
+  "license": "GPL-2.0-or-later",
+  "license_notice": "Original copyright and license headers are retained in all four Python files. LICENSE contains the GNU GPL version 2 text; the source headers permit later versions.",
+  "files": [
+    {
+      "name": "dxfColorMap.py",
+      "url": "https://raw.githubusercontent.com/yorikvanhavre/Draft-dxf-importer/e060ef0d8fe7143c2e0ce34734b686ba073f3cc1/dxfColorMap.py",
+      "size_bytes": 11324,
+      "sha256": "4b4a66749c68944502c4ba4c981427563b2adb8e125877626710c585d07de4b0"
+    },
+    {
+      "name": "dxfImportObjects.py",
+      "url": "https://raw.githubusercontent.com/yorikvanhavre/Draft-dxf-importer/e060ef0d8fe7143c2e0ce34734b686ba073f3cc1/dxfImportObjects.py",
+      "size_bytes": 41108,
+      "sha256": "4f897ec54f5669cedf42274574a0d38cdf543333e25f7452075c00be8a7365b5"
+    },
+    {
+      "name": "dxfLibrary.py",
+      "url": "https://raw.githubusercontent.com/yorikvanhavre/Draft-dxf-importer/e060ef0d8fe7143c2e0ce34734b686ba073f3cc1/dxfLibrary.py",
+      "size_bytes": 33070,
+      "sha256": "0bae42b630a9797ea56dcbe9a6dfa648369a089289f7fb33ab928c9784cac7c8"
+    },
+    {
+      "name": "dxfReader.py",
+      "url": "https://raw.githubusercontent.com/yorikvanhavre/Draft-dxf-importer/e060ef0d8fe7143c2e0ce34734b686ba073f3cc1/dxfReader.py",
+      "size_bytes": 13671,
+      "sha256": "7c61f540a4b0a484097c2ef1b42fa9f692babe59f45be9541b32cfb1805bc445"
+    },
+    {
+      "name": "README.md",
+      "url": "https://raw.githubusercontent.com/yorikvanhavre/Draft-dxf-importer/e060ef0d8fe7143c2e0ce34734b686ba073f3cc1/README.md",
+      "size_bytes": 3063,
+      "sha256": "18e56ed3046c39089dfe820c89ed2c8cc058cf1b9cdb2a0925e934318fec11ca"
+    },
+    {
+      "name": "LICENSE",
+      "url": "https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt",
+      "size_bytes": 17984,
+      "sha256": "edaef632cbb643e4e7a221717a6c441a4c1a7c918e6e4d56debc3d8739b233f6"
+    }
+  ]
+}

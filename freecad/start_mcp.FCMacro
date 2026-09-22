@@ -1,0 +1,52 @@
+"""Start the original addon in the project-local FreeCAD profile."""
+import json
+import os
+from pathlib import Path
+
+import FreeCAD
+import FreeCADGui
+from PySide import QtCore
+
+component = Path(os.environ["CAD_FREECAD_ROOT"]).resolve()
+
+
+def start_project_mcp():
+    from rpc_server import rpc_server
+
+    # Reuse the installed project converter through FreeCAD's own DWG importer.
+    converter = component / "ODAFileConverter"
+    prefs = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Mod/Draft")
+    # Avoid a modal import-options dialog blocking a remote execute_code call.
+    prefs.SetBool("dxfShowDialog", False)
+    prefs.SetBool("dxftext", True)
+    prefs.SetBool("dxfUseLegacyImporter", False)
+    prefs.SetBool("dxfImportAsDraft", True)
+    prefs.SetBool("dxfImportAsPrimitives", False)
+    prefs.SetBool("dxfImportAsShapes", False)
+    prefs.SetBool("dxfImportAsFused", False)
+    prefs.SetBool("dxfCreateSketch", False)
+    prefs.SetBool("dxfUseDraftVisGroups", True)
+    prefs.SetBool("importDxfHatches", True)
+    # The native exporter omits Draft text in the verified 1.1.3 build.
+    # Use FreeCAD's supported legacy exporter and the pinned optional library.
+    prefs.SetBool("dxfUseLegacyExporter", True)
+    prefs.SetBool("dxfAllowDownload", False)
+    if converter.is_file():
+        prefs.SetString("TeighaFileConverter", str(converter))
+        prefs.SetInt("DWGConversion", 2)
+    FreeCADGui.activateWorkbench("FreeCADMCPAddonWorkbench")
+    message = rpc_server.start_rpc_server()
+    FreeCAD.Console.PrintMessage(message + "\n")
+    report = {
+        "version": FreeCAD.Version(),
+        "user_data": FreeCAD.getUserAppDataDir(),
+        "addon_source": str(component / "mcp" / "addon" / "FreeCADMCP"),
+        "rpc": message,
+        "pid": os.getpid(),
+    }
+    destination = component.parent / ".runtime" / "freecad" / "startup.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
+QtCore.QTimer.singleShot(1000, start_project_mcp)
