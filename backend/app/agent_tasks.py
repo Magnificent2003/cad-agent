@@ -1,6 +1,7 @@
 """Hand files to the agent and collect outputs; contains no CAD editing recipes."""
 import asyncio
 import hashlib
+import json
 import logging
 from pathlib import Path
 import shutil
@@ -8,10 +9,12 @@ import time
 import uuid
 
 from agent.client import AgentError
-from agent.session import terminal_assistant
+from agent.preview import PreviewUnavailable, read_preview
+from agent.session import is_internal_message, needs_continuation, terminal_assistant
 from . import freecad
 from .jobs import JobConflict, drawing_root
 from .store import encode, now
+from .config import ROOT
 
 logger = logging.getLogger(__name__)
 ACTIVE = ('preparing', 'running', 'collecting', 'stopping')
@@ -28,6 +31,9 @@ class AgentTasks:
         self.runners = {}
         self.poll_interval = 2
         self.timeout = 3600
+        self.max_recoveries = 2
+        self.idle_reply_grace = 8
+        self.cleanup_inactive_bindings()
 
     def root(self, task_id):
         return self.settings.data_dir / 'agent-tasks' / task_id
@@ -40,6 +46,8 @@ class AgentTasks:
         self.store.execute('UPDATE agent_tasks SET status=?,error=?,updated_at=? WHERE id=?', (status, error, now(), task_id))
         task = self.store.one('SELECT * FROM agent_tasks WHERE id=?', (task_id,))
         busy = status in ACTIVE
+        if not busy:
+            self.clear_binding(task)
         self.store.execute('UPDATE sessions SET busy=? WHERE id=?', (int(busy), task['session_id']))
         self.bus.publish({'type': 'artifacts.updated', 'properties': {'sessionID': task['session_id']}})
         self.bus.publish({'type': 'session.status', 'properties': {'sessionID': task['session_id'], 'status': {'type': 'busy' if busy else 'idle'}}})
@@ -53,7 +61,52 @@ class AgentTasks:
         if any(item.get('type') not in {None, 'idle'} for item in (await self.agent.session_status()).values()):
             raise JobConflict('智能体仍有任务在运行，请等待或停止后再提交。')
 
-    def prepare(self, task, drawing):
+    def binding_path(self, session_id):
+        if not session_id or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in session_id):
+            raise ValueError('无效的智能体会话标识')
+        return self.settings.data_dir / 'agent-contexts' / (session_id + '.json')
+
+    def read_binding(self, path):
+        # Bindings are auxiliary state. A damaged file must not prevent the
+        # authoritative database status and busy flag from reaching a terminal state.
+        if path.is_symlink():
+            return None
+        try:
+            context = json.loads(path.read_text())
+            if not isinstance(context, dict):
+                raise ValueError('任务上下文不是对象')
+            return context
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            logger.warning('Cannot read task binding %s (%s)', path.name, type(exc).__name__)
+            return None
+
+    def clear_binding(self, task):
+        path = self.binding_path(task['session_id'])
+        context = self.read_binding(path)
+        if context and context.get('task_id') == task['id'] and context.get('session_id') == task['session_id']:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning('Cannot remove task binding %s (%s)', path.name, type(exc).__name__)
+
+    def cleanup_inactive_bindings(self):
+        # Store.initialize() interrupts old tasks before this manager starts.
+        # Only remove files positively matched to a known, inactive task.
+        directory = self.settings.data_dir / 'agent-contexts'
+        if directory.is_symlink():
+            return
+        for path in directory.glob('*.json'):
+            context = self.read_binding(path)
+            if not context or not isinstance(context.get('task_id'), str):
+                continue
+            task = self.store.one('SELECT id,session_id,status FROM agent_tasks WHERE id=?', (context['task_id'],))
+            if (task and task['status'] not in ACTIVE and context.get('session_id') == task['session_id']
+                    and path == self.binding_path(task['session_id'])):
+                self.clear_binding(task)
+
+    def prepare(self, task, drawing, text):
         root = self.root(task['id'])
         for directory in ('input', 'output', 'scratch'):
             (root / directory).mkdir(parents=True, exist_ok=True)
@@ -67,15 +120,53 @@ class AgentTasks:
             shutil.copy2(source, target)
             target.chmod(0o444)
             inputs.append({'path': str(target.resolve()), 'sha256': digest(target), 'format': source.suffix[1:]})
+        # Reuse only this revision's existing preview; no rendering or fallback
+        # to another revision is performed while admitting a model task.
+        preview = {'available': False, 'drawing_id': drawing['id'], 'revision_id': task['source_revision'],
+                   'note': '只读总览，仅供理解位置和内容；可能省略不支持的对象。精确单位、坐标和修改以 CAD 原文件为准。'}
+        checked_inputs = list(inputs)
+        try:
+            image_data, image_info = read_preview(original / 'revisions' / task['source_revision'] / 'preview.png')
+        except PreviewUnavailable as exc:
+            preview['reason'] = str(exc)
+        else:
+            target = root / 'input/overview.png'
+            try:
+                target.write_bytes(image_data)
+                target.chmod(0o444)
+            except OSError:
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                preview['reason'] = '无法准备当前版本的预览副本，继续使用 CAD 文件。'
+            else:
+                preview.update(available=True, path=str(target.resolve()), mime='image/png',
+                               sha256=digest(target), **image_info)
+                checked_inputs.append({'path': preview['path'], 'sha256': preview['sha256'], 'format': 'png'})
         previous = self.store.all('SELECT id,name,path FROM artifacts WHERE session_id=? ORDER BY created_at', (task['session_id'],))
         context = {'task_id': task['id'], 'session_id': task['session_id'], 'drawing_id': drawing['id'],
                    'drawing_name': drawing['name'], 'revision_id': task['source_revision'],
                    'units': (drawing.get('metadata') or {}).get('units'), 'input_files': inputs,
                    'output_directory': str((root / 'output').resolve()),
                    'scratch_directory': str((root / 'scratch').resolve()),
-                   'previous_artifacts': [{'name': item['name'], 'path': item['path']} for item in previous]}
+                   'previous_artifacts': [{'name': item['name'], 'path': item['path']} for item in previous],
+                   'request': text, 'preview': preview}
+        # This inventory belongs to FreeCAD's Python, not the backend virtualenv.
+        installed = ROOT / 'freecad/runtime/python-deps/installed.lock.json'
+        if installed.is_file():
+            lock = json.loads(installed.read_text())
+            context['runtime'] = {'python': lock['environment']['python'],
+                                  'packages': {item['name']: item['version'] for item in lock['packages']},
+                                  'dependency_source': str(installed),
+                                  'note': '专用依赖在服务启动时校验；历史缺依赖结论不能代表本轮环境。'}
         (root / 'context.json').write_text(encode(context), encoding='utf-8')
-        self.store.execute('UPDATE agent_tasks SET inputs=? WHERE id=?', (encode(inputs), task['id']))
+        binding = self.binding_path(task['session_id'])
+        binding.parent.mkdir(parents=True, exist_ok=True)
+        temporary = binding.with_suffix('.tmp')
+        temporary.write_text(encode(context), encoding='utf-8')
+        temporary.replace(binding)
+        self.store.execute('UPDATE agent_tasks SET inputs=? WHERE id=?', (encode(checked_inputs), task['id']))
         return context
 
     async def start(self, session, drawing, text):
@@ -98,12 +189,15 @@ class AgentTasks:
             db.execute('UPDATE sessions SET busy=1,busy_since=? WHERE id=?', (time.time(), session['id']))
         task = self.store.one('SELECT * FROM agent_tasks WHERE id=?', (task_id,))
         try:
-            context = await asyncio.to_thread(self.prepare, task, drawing)
+            context = await asyncio.to_thread(self.prepare, task, drawing, text)
             previous = {message['info']['id'] for message in await self.agent.messages(session['id'])}
             if self.store.one('SELECT status FROM agent_tasks WHERE id=?', (task_id,))['status'] == 'stopping':
                 self.set_status(task_id, 'cancelled')
                 return task_id
-            await self.agent.prompt_async(session['id'], text, system='本轮可信文件任务上下文（以此覆盖历史文件目标）：' + encode(context))
+            await self.agent.prompt_async(
+                session['id'], text, system='本轮可信文件任务上下文（以此覆盖历史文件目标）：' + encode(context),
+                preview=Path(context['preview']['path']) if context['preview']['available'] else None,
+            )
             if self.store.one('SELECT status FROM agent_tasks WHERE id=?', (task_id,))['status'] != 'stopping':
                 self.set_status(task_id, 'running')
             self.runners[task_id] = asyncio.create_task(self.monitor(task_id, previous))
@@ -167,6 +261,8 @@ class AgentTasks:
         started = time.monotonic()
         task = self.store.one('SELECT * FROM agent_tasks WHERE id=?', (task_id,))
         session_id = task['session_id']
+        recoveries = []
+        idle_since = None
         try:
             while True:
                 state = self.store.one('SELECT status FROM agent_tasks WHERE id=?', (task_id,))['status']
@@ -179,20 +275,68 @@ class AgentTasks:
                     messages = await self.agent.messages(session_id)
                     terminal = terminal_assistant(messages, previous)
                     idle = (await self.agent.session_status()).get(session_id, {}).get('type') in {None, 'idle'}
-                    if terminal and idle and await freecad.idle():
-                        if terminal['info'].get('error'):
+                    if idle and await freecad.idle():
+                        # Cancellation can arrive during any readiness await;
+                        # never overwrite stopping with collecting or a recovery.
+                        if self.store.one('SELECT status FROM agent_tasks WHERE id=?', (task_id,))['status'] == 'stopping':
+                            continue
+                        current = [message for message in messages if message['info']['id'] not in previous]
+                        if any(is_internal_message(message) and message['info'].get('error') for message in current):
+                            self.set_status(task_id, 'failed', '智能体内部整理或续跑失败，未生成正式答复；本轮输出未发布。')
+                            return
+                        if terminal and terminal['info'].get('error'):
                             self.set_status(task_id, 'failed', '模型任务失败；本轮输出未自动发布。')
                             return
-                        self.set_status(task_id, 'collecting')
-                        await asyncio.to_thread(self.collect, task)
-                        # Abort may have arrived while copying files.
-                        if self.store.one('SELECT status FROM agent_tasks WHERE id=?', (task_id,))['status'] == 'stopping':
-                            self.store.execute('DELETE FROM artifacts WHERE task_id=?', (task_id,))
-                            self.set_status(task_id, 'cancelled')
+                        # Automatic compaction can briefly appear idle between its summary
+                        # and continuation. Require sustained engine AND FreeCAD idleness.
+                        if terminal:
+                            idle_since = None
+                        elif idle_since is None:
+                            idle_since = time.monotonic()
+                        missing_reply = idle_since is not None and time.monotonic() - idle_since >= self.idle_reply_grace
+                        if (terminal and needs_continuation(terminal)) or missing_reply:
+                            if len(recoveries) >= self.max_recoveries:
+                                self.set_status(task_id, 'failed', '模型连续截断或未给出正式答复，自动续跑仍未完成；本轮输出未发布。')
+                                return
+                            # Resume the same file task, preserving its input/output and history.
+                            # Only count abnormal model termination, never ordinary tool iterations.
+                            context = json.loads((self.root(task_id) / 'context.json').read_text())
+                            previous = {message['info']['id'] for message in messages}
+                            reason = terminal['info'].get('finish') if terminal else 'idle-without-answer'
+                            recovery_message = terminal or (current[-1] if current else None)
+                            recoveries.append({'message_id': recovery_message['info']['id'] if recovery_message else None,
+                                               'finish': reason, 'at': now()})
+                            (self.root(task_id) / 'recovery.json').write_text(encode(recoveries), encoding='utf-8')
+                            logger.warning('Resuming task %s after incomplete model reply (%s), attempt %d',
+                                           task_id, reason, len(recoveries))
+                            idle_since = None
+                            await self.agent.prompt_async(
+                                session_id,
+                                '上一段执行已停止，但因截断、空答复或内部整理后未继续，用户尚未收到完整结果。'
+                                '请在同一任务中继续：先利用已有证据完成用户原始要求并给出简洁中文答复；'
+                                '仅在确有关键缺口时继续调用工具，不重复已完成操作，不扩大任务。'
+                                '内部摘要不是用户答复；若仍有阻碍，明确已完成部分和具体阻碍。',
+                                system='本轮可信文件任务上下文（以此覆盖历史文件目标）：' + encode(context),
+                                internal=True,
+                                preview=Path(context['preview']['path']) if context.get('preview', {}).get('available') else None,
+                            )
+                            continue
+                        if terminal:
+                            if terminal['info'].get('finish') != 'stop':
+                                self.set_status(task_id, 'failed', '模型未正常结束本轮答复；本轮输出未自动发布。')
+                                return
+                            self.set_status(task_id, 'collecting')
+                            await asyncio.to_thread(self.collect, task)
+                            # Abort may have arrived while copying files.
+                            if self.store.one('SELECT status FROM agent_tasks WHERE id=?', (task_id,))['status'] == 'stopping':
+                                self.store.execute('DELETE FROM artifacts WHERE task_id=?', (task_id,))
+                                self.set_status(task_id, 'cancelled')
+                                return
+                            self.import_artifacts(task)
+                            self.set_status(task_id, 'completed')
                             return
-                        self.import_artifacts(task)
-                        self.set_status(task_id, 'completed')
-                        return
+                    else:
+                        idle_since = None
                 if time.monotonic() - started > self.timeout and state != 'stopping':
                     self.set_status(task_id, 'stopping', '本轮超过一小时，正在停止模型并等待 FreeCAD 结束操作。')
                 await asyncio.sleep(self.poll_interval)

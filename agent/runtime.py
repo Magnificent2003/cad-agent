@@ -36,6 +36,8 @@ def engine_command(env: dict[str, str]) -> list[str]:
 
 def engine_environment(env: dict[str, str], config: dict, runtime: Path = STATE) -> dict[str, str]:
     result = normalize_environment(env)
+    data = Path(result.get("CAD_DATA_DIR") or ROOT / "data").expanduser()
+    result["CAD_AGENT_CONTEXT_DIR"] = str(((data if data.is_absolute() else ROOT / data) / "agent-contexts").resolve())
     # Keep upstream-required names in this boundary, out of business modules.
     for key in ("OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT", "OPENCODE_PERMISSION", "CAD_INTERNAL_TOKEN"):
         result.pop(key, None)

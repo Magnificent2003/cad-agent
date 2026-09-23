@@ -5,7 +5,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from agent.client import event_session_id
+from agent.client import AgentError, event_session_id
+from agent.session import is_internal_message, is_internal_part
 from ..store import now
 from .drawings import get_drawing
 
@@ -13,13 +14,82 @@ router = APIRouter(prefix="/api")
 
 
 def visible_part(part):
+    if is_internal_part(part):
+        return None
     common = {key: part[key] for key in ("id", "sessionID", "messageID", "type") if key in part}
-    if part.get("type") == "text" and not part.get("synthetic"):
+    if part.get("type") == "text":
         return {**common, "text": part.get("text", "")}
     if part.get("type") == "tool":
         state = part.get("state", {})
         return {**common, "tool": part.get("tool"), "state": {"status": state.get("status"), "title": state.get("title"), "error": "工具执行未成功，请查看助手说明。" if state.get("error") else None}}
     return None
+
+
+class MessageEventFilter:
+    """Check a streamed part's parent before forwarding any text or tool data."""
+
+    def __init__(self, agent):
+        self.agent = agent
+        self.parents = {}
+        self.parts = {}
+
+    async def parent_visible(self, session_id, message_id):
+        if not message_id:
+            return False
+        key = (session_id, message_id)
+        if key not in self.parents:
+            # Reconnection can miss message.updated; never infer visibility from a part.
+            try:
+                history = await self.agent.messages(session_id)
+            except AgentError:
+                return False
+            for message in history:
+                info = message.get("info", message)
+                if info.get("id"):
+                    self.parents[(session_id, info["id"])] = not is_internal_message(info)
+        return self.parents.get(key, False)
+
+    async def filter(self, event, session_id):
+        kind = event.get("type")
+        properties = event.get("properties") or {}
+        if kind == "message.updated":
+            info = properties.get("info") or {}
+            key = (session_id, info.get("id"))
+            self.parents[key] = not is_internal_message(info)
+            # User text arrives as parts; this avoids an empty bubble for synthetic users.
+            if not self.parents[key] or info.get("role") != "assistant":
+                return None
+            safe = {key: info[key] for key in ("id", "sessionID", "role", "time", "finish") if key in info}
+            return {"type": kind, "properties": {"info": safe}}
+        if kind == "message.part.updated":
+            raw = properties.get("part") or {}
+            key = (session_id, raw.get("messageID"), raw.get("id"))
+            part = visible_part(raw)
+            if not part or not await self.parent_visible(session_id, raw.get("messageID")):
+                self.parts.pop(key, None)
+                return None
+            self.parts[key] = part.get("type")
+            return {"type": kind, "properties": {"part": part}}
+        if kind in {"message.part.delta", "message.part.removed"}:
+            key = (session_id, properties.get("messageID"), properties.get("partID"))
+            part_type = self.parts.get(key)
+            if not part_type or not await self.parent_visible(session_id, properties.get("messageID")):
+                return None
+            if kind == "message.part.delta":
+                if part_type != "text" or properties.get("field") != "text":
+                    return None
+                fields = ("sessionID", "messageID", "partID", "field", "delta")
+            else:
+                self.parts.pop(key, None)
+                fields = ("sessionID", "messageID", "partID")
+            return {"type": kind, "properties": {key: properties[key] for key in fields if key in properties}}
+        if kind == "message.removed":
+            key = (session_id, properties.get("messageID"))
+            if not self.parents.pop(key, False):
+                return None
+            self.parts = {part: value for part, value in self.parts.items() if part[:2] != key}
+            return {"type": kind, "properties": {key: properties[key] for key in ("sessionID", "messageID") if key in properties}}
+        return None
 
 
 def get_session(request, session_id):
@@ -61,9 +131,11 @@ async def messages(session_id: str, request: Request):
     result = []
     for message in raw:
         info = message.get("info", message)
-        if info.get("role") not in {"user", "assistant"}:
+        if is_internal_message(message):
             continue
         parts = [visible for part in message.get("parts", []) if (visible := visible_part(part))]
+        if info.get("role") == "user" and not parts:
+            continue
         # Do not expose internal context, reasoning history or system prompts.
         result.append({"id": info.get("id"), "role": info["role"], "parts": parts, "created_at": info.get("time", {}).get("created"), "error": "模型任务未正常完成，请重试。" if info.get("error") else None})
     return result

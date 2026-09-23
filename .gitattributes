@@ -1,0 +1,2 @@
+# Unified diffs intentionally contain one space on empty context lines.
+freecad/patches/*.patch whitespace=-blank-at-eol

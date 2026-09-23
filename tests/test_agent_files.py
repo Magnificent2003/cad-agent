@@ -23,6 +23,7 @@ def reply(mid, finish='stop'):
 class FileAgent:
     def __init__(self):
         self.contexts = []
+        self.previews = []
         self.finished = True
         self.turn = 0
         self.tool_mode = 'freecad'
@@ -56,9 +57,10 @@ class FileAgent:
     async def messages(self, session):
         return [reply('old'), reply(f'turn{self.turn}', 'stop' if self.finished else 'tool-calls')]
 
-    async def prompt_async(self, session, text, system=None):
+    async def prompt_async(self, session, text, system=None, *, preview=None):
         context = json.loads(system.split('：', 1)[1])
         self.contexts.append(context)
+        self.previews.append(preview)
         self.turn += 1
         output = Path(context['output_directory'])
         # Simulates arbitrary model-generated output, not a production edit API.
@@ -230,7 +232,7 @@ def test_analysis_only_turn_needs_no_artifact(app_client, monkeypatch):
     client, agent = app_client
     _, session, _ = prepare(client)
 
-    async def analysis(session, text, system=None):
+    async def analysis(session, text, system=None, *, preview=None):
         agent.turn += 1
 
     monkeypatch.setattr(agent, 'prompt_async', analysis)

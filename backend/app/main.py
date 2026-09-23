@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 async def agent_events(app):
     state = app.state
-    visible_ids = set()
+    message_filter = chat.MessageEventFilter(state.agent)
     while True:
         try:
             async for event in state.agent.events(ready=state.agent_ready):
@@ -39,20 +39,11 @@ async def agent_events(app):
                             event = {"type": "session.status", "properties": {"sessionID": session_id, "status": {"type": "busy"}}}
                 if kind == "session.error":
                     event = {"type": kind, "properties": {"sessionID": session_id, "error": {"message": "智能体任务失败，请检查模型服务后重试。"}}}
-                elif kind == "message.part.updated":
-                    part = chat.visible_part(event.get("properties", {}).get("part", {}))
-                    if not part:
+                elif kind.startswith("message."):
+                    event = await message_filter.filter(event, session_id)
+                    if event is None:
                         continue
-                    visible_ids.add(part.get("id"))
-                    event = {"type": kind, "properties": {"part": part}}
-                elif kind == "message.part.delta":
-                    properties = event.get("properties", {})
-                    if properties.get("partID") not in visible_ids or properties.get("field") != "text":
-                        continue
-                elif kind == "message.updated":
-                    info = event.get("properties", {}).get("info", {})
-                    event = {"type": kind, "properties": {"info": {key: info[key] for key in ("id", "sessionID", "role", "time", "finish") if key in info}}}
-                elif kind not in {"session.status", "session.idle", "session.error", "message.part.removed", "message.removed"}:
+                elif kind not in {"session.status", "session.idle", "session.error"}:
                     continue
                 state.bus.publish(event)
         except asyncio.CancelledError:

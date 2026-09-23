@@ -63,7 +63,9 @@ cad-agent/
 ├── agent/
 │   ├── launcher.py       唯一智能体入口
 │   ├── config.json       模型及 FreeCAD MCP 配置
-│   ├── prompts/cad.txt   自主工作方式与文件范围约定
+│   ├── prompts/cad.txt   自主工作方式、CAD API 导航与文件范围约定
+│   ├── plugins/          当前任务上下文注入（发行版和源码模式共用）
+│   ├── session.py        内部消息过滤与答复完成判定
 │   ├── client.py         后端与智能体的 HTTP 通信
 │   ├── runtime.py        运行环境与源码/发行程序选择
 │   └── engine/           可修改的智能体引擎源码
@@ -85,6 +87,12 @@ cad-agent/
 
 前端的图纸、版本、会话标识由后端转换成明确的文件上下文。每轮目录为 `data/agent-tasks/<任务ID>/`，包含 `input/`、`scratch/`、`output/` 和 `context.json`。原上传文件仍在 `data/drawings/`；成果快照保存到 `data/artifacts/`，记录来源、哈希和后续图纸。
 
+同一版本已有的 PNG 总览会作为视觉输入随提问发送给模型，并保存为只读 `input/overview.png`；精确数据仍从 DXF/DWG 查询。这样模型可以看到前端对应图纸，不必仅为看总览重新导入 FreeCAD。无效、缺失或过大的预览会在上下文中注明并跳过，不会取别的版本代替，也不会阻断文件分析。
+
+当前活跃任务另有一个 `data/agent-contexts/<会话ID>.json` 绑定。智能体插件在每次模型调用、历史压缩和 Python 执行前读取它，并向脚本提供 `cad_context` 字典；其中包含本轮输入、输出、原始要求及 FreeCAD 专用依赖信息。任务结束后清除活跃绑定，原始 `context.json` 仍保留用于排查。这样目录与环境事实不会只依赖模型记忆。明确使用旧任务路径的脚本会收到纠正提示；这项检查不是 Python 沙箱。
+
+模型停止生成不等于任务成功：内部压缩摘要不会显示成助手答复；输出截断、空答复或压缩后持续空闲会在同一文件任务内最多续跑两次。正常工具循环不受这个次数限制。只有正式答复正常结束、引擎与 FreeCAD 均已空闲，后端才检查并发布成果；仍未完成则明确失败。
+
 后端不解释“提取什么”或“怎样修改”，也不提供逐场景的编辑菜单。具体做法由智能体通过 FreeCAD API 组合。后端保留 ezdxf/ODA 用于上传、预览和下载转换，不作为智能体的备用编辑入口。
 
 ## 安装到新主机
@@ -103,7 +111,7 @@ bash freecad/install.sh
 
 FreeCAD 执行环境的额外依赖在 `freecad/requirements-python.txt` 中管理，安装到 `freecad/runtime/python-deps/`。新增依赖后运行 `bash freecad/install_python.sh`，再重新一键启动；GUI 与无界面 MCP 都能使用。详见 [依赖维护说明](freecad/README.md#给-freecad-补充-python-依赖)。
 
-`freecad/mcp/` 是可编辑上游源码，插件通过软链接加载。修改 MCP 服务源码后重启智能体；修改插件后重启全部服务。不要把后端 `.venv` 的包复制到 FreeCAD 自带 Python。
+`freecad/mcp/` 是可编辑上游源码，插件通过软链接加载。本项目对 Python 错误反馈的修复保存在 `freecad/patches/`，安装时会幂等应用；它保留失败前输出、stderr 和 traceback，帮助模型定位代码错误，未增加专用 CAD 业务操作。修改 MCP 服务源码后重启智能体；修改插件后重启全部服务。不要把后端 `.venv` 的包复制到 FreeCAD 自带 Python。
 
 ## 后续修改入口
 
@@ -111,6 +119,8 @@ FreeCAD 执行环境的额外依赖在 `freecad/requirements-python.txt` 中管�
 | --- | --- |
 | 智能体怎样探索、执行和报告 | `agent/prompts/cad.txt` |
 | 模型、工具和引擎配置 | `agent/config.json`、`agent/launcher.py` |
+| 当前任务绑定与历史压缩后的上下文 | `agent/plugins/task-context.mjs`、`backend/app/agent_tasks.py` |
+| 消息显示、内部摘要过滤与答复完成判定 | `agent/session.py`、`backend/app/api/chat.py` |
 | 文件交接、成果、取消与会话继续 | `backend/app/agent_tasks.py`、`backend/app/api/artifacts.py` |
 | CAD API 执行与插件 | `freecad/mcp/src/`、`freecad/mcp/addon/` |
 | 网页对话与成果展示 | `frontend/src/components/ChatPanel.tsx`、`frontend/src/App.tsx` |
@@ -131,11 +141,12 @@ AGENT_RUNTIME=source bash scripts/dev.sh
 - 完整模型会话、代码与工具反馈保存在 `.runtime/agent/data/opencode/`。
 - FreeCAD 日志：`.runtime/freecad/gui.log`。
 - 启动失败与退出时的端口诊断：`.runtime/startup-errors.log`。
-- 本轮文件上下文：`data/agent-tasks/<任务ID>/context.json`。
+- 本轮文件上下文：`data/agent-tasks/<任务ID>/context.json`；发生自动续跑时另有 `recovery.json`。
 
 ```bash
 source scripts/env.sh
 pytest -q
+node --test tests/task-context.test.mjs
 ruff check agent/*.py backend scripts tests
 npm run build --prefix frontend
 python scripts/verify_agent.py
@@ -143,6 +154,6 @@ python scripts/verify_agent.py
 
 缓存和软件不要混为一谈：`.cache/` 可以清理并重新生成；`.tools/`、`.venv/`、组件 `runtime/` 删除后需要重新安装。`data/` 和 `.runtime/agent/` 含图纸、成果及会话，请按项目数据保留。
 
-[FreeCAD 安装与诊断](freecad/README.md) · [环境说明](docs/environment.md) · [本次自主执行接入](docs/autonomous-agent.md) · [早期 FreeCAD 文件兼容性实测](docs/freecad-validation.md)
+[智能体循环排查与复测](docs/agent-loop-validation.md) · [FreeCAD 安装与诊断](freecad/README.md) · [环境说明](docs/environment.md) · [本次自主执行接入](docs/autonomous-agent.md) · [早期 FreeCAD 文件兼容性实测](docs/freecad-validation.md)
 
 初始部署指南和需求表保留作为历史材料；实际能力、目录和启动方式以本 README 为准。

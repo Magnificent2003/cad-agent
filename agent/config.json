@@ -43,8 +43,8 @@
             "field": "reasoning_content"
           },
           "limit": {
-            "context": 131072,
-            "output": 8192
+            "context": 1000000,
+            "output": 32000
           }
         }
       }

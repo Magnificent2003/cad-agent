@@ -51,6 +51,7 @@ def test_project_config_exposes_only_freecad_mcp_and_preserves_model_settings():
     assert provider["options"]["baseURL"] == "https://model.example.invalid/v1"
     assert provider["options"]["apiKey"] == "{env:DEEPSEEK_API_KEY}"
     assert config["agent"]["cad"]["prompt"]
+    assert config["plugin"] == [(runtime.COMPONENT / "plugins/task-context.mjs").resolve().as_uri()]
 
 
 def test_release_and_source_commands_require_their_own_installation(tmp_path, monkeypatch):
@@ -97,6 +98,16 @@ def test_engine_boundary_maps_credentials_and_isolates_runtime_directories(tmp_p
         assert (tmp_path / suffix).is_dir()
     assert original["OPENCODE_SERVER_PASSWORD"] == "fake-legacy-password"
     assert "XDG_CONFIG_HOME" not in original
+    assert result["CAD_AGENT_CONTEXT_DIR"] == str(runtime.ROOT / "data/agent-contexts")
+
+
+@pytest.mark.parametrize("directory", ["relative-data", "/tmp/absolute-cad-data"])
+def test_context_directory_matches_business_data_directory(tmp_path, directory):
+    from pathlib import Path
+
+    result = runtime.engine_environment({"CAD_DATA_DIR": directory}, {}, runtime=tmp_path)
+    expected = Path(directory) if Path(directory).is_absolute() else runtime.ROOT / directory
+    assert result["CAD_AGENT_CONTEXT_DIR"] == str(expected / "agent-contexts")
 
 
 def test_launcher_source_mode_uses_engine_cwd_and_separate_session_workspace(tmp_path, monkeypatch):

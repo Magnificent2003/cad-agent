@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import logging
+from pathlib import Path
 from collections.abc import AsyncIterator, Iterable
 from typing import Any
 from urllib.parse import quote
 
 import httpx
+
+from .preview import PreviewUnavailable, read_preview
+
+logger = logging.getLogger(__name__)
 
 
 class AgentError(RuntimeError):
@@ -93,8 +100,22 @@ class AgentClient:
     async def messages(self, session_id: str) -> list[dict[str, Any]]:
         return await self._request("GET", f"/session/{quote(session_id, safe='')}/message")
 
-    async def prompt_async(self, session_id: str, text: str, system: str | None = None) -> None:
-        payload: dict[str, Any] = {"agent": "cad", "parts": [{"type": "text", "text": text}]}
+    async def prompt_async(self, session_id: str, text: str, system: str | None = None, *, internal: bool = False, preview: Path | None = None) -> None:
+        part: dict[str, Any] = {"type": "text", "text": text}
+        if internal:
+            part.update(synthetic=True, metadata={"cad_task_recovery": True})
+        payload: dict[str, Any] = {"agent": "cad", "parts": [part]}
+        if preview is not None:
+            try:
+                data, _ = await asyncio.to_thread(read_preview, preview)
+            except PreviewUnavailable as exc:
+                logger.warning("Agent preview omitted: %s", exc)
+                system = (system or "") + "\n本次未附加预览图片：" + str(exc) + "继续使用当前任务的 CAD 输入文件。"
+            else:
+                payload["parts"].append({
+                    "type": "file", "mime": "image/png", "filename": preview.name,
+                    "url": "data:image/png;base64," + base64.b64encode(data).decode("ascii"),
+                })
         if system:
             payload["system"] = system
         await self._request("POST", f"/session/{quote(session_id, safe='')}/prompt_async", json=payload)

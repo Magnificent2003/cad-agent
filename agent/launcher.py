@@ -23,6 +23,7 @@ def build_config(env: dict[str, str]) -> dict:
     provider["options"]["baseURL"] = env.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
     config["agent"]["cad"]["prompt"] = (COMPONENT / "prompts/cad.txt").read_text(encoding="utf-8")
     config["mcp"]["freecad"]["command"] = ["bash", str(ROOT / "freecad/mcp.sh")]
+    config["plugin"] = [(COMPONENT / "plugins/task-context.mjs").resolve().as_uri()]
     return config
 
 
