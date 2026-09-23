@@ -1,4 +1,13 @@
-import type { ArtifactList, Drawing, Job, Message, Revision, Session } from './types'
+import type {
+  ArtifactList,
+  Drawing,
+  Job,
+  Message,
+  Project,
+  Revision,
+  Session,
+  Workbench,
+} from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -29,6 +38,20 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
 
 const enc = encodeURIComponent
 export const api = {
+  projects: () => request<Project[]>('/projects'),
+  createProject: (name: string) =>
+    request<Project>('/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }),
+  renameProject: (id: string, name: string) =>
+    request<Project>(`/projects/${enc(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }),
+  workbench: (id: string) => request<Workbench>(`/projects/${enc(id)}/workbench`),
   artifacts: (session: string) => request<ArtifactList>(`/sessions/${enc(session)}/artifacts`),
   openArtifact: (id: string) =>
     request<{ drawing_id: string; session_id: string }>(`/artifacts/${enc(id)}/open`, {
@@ -54,10 +77,13 @@ export const api = {
       method: 'POST',
     }),
   job: (id: string) => request<Job>(`/jobs/${enc(id)}`),
-  upload: (file: File) => {
+  upload: (file: File, projectId: string) => {
     const body = new FormData()
     body.append('file', file)
-    return request<{ drawing_id: string; job_id: string }>('/drawings', { method: 'POST', body })
+    return request<{ drawing_id: string; job_id: string }>(`/projects/${enc(projectId)}/drawings`, {
+      method: 'POST',
+      body,
+    })
   },
   preview: (id: string, revision: string, layout: string, format: 'svg' | 'png') =>
     `/api/drawings/${enc(id)}/revisions/${enc(revision)}/preview?${new URLSearchParams({ layout, format, renderer: '2' })}`,
@@ -81,4 +107,15 @@ export function revisionLabel(revision: string | null | undefined, number?: numb
   if (!revision) return '尚无版本'
   if (/^r\d+$/.test(revision)) return revision
   return number ? `r${String(number).padStart(4, '0')}` : revision.slice(0, 8)
+}
+
+export function saveBlob(blob: Blob, filename: string) {
+  const objectUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
 }

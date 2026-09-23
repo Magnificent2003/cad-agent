@@ -1,8 +1,8 @@
-# FreeCAD 文件操作实验
+# FreeCAD 与项目 MCP
 
-这个组件直接接入 [neka-nat/freecad-mcp](https://github.com/neka-nat/freecad-mcp) 的原版工具。智能体可以通过 `execute_code` 编写和执行 FreeCAD Python，查询、修改并导出图纸；本项目没有另写一套裁剪或删除 MCP。
+这个组件的 MCP 源码由 `cad-agent` 主仓库直接管理，来源于 [neka-nat/freecad-mcp](https://github.com/neka-nat/freecad-mcp)，保留 MIT 许可证及版权说明。智能体可以通过 `execute_code` 编写和执行 FreeCAD Python，查询、修改并导出图纸；本项目没有另写一套裁剪或删除 MCP。
 
-网页 → 后端的任务副本 → 智能体（4096）→ 原版 MCP（stdio）→ FreeCAD 插件（9875）。生成文件由后端自动收集，网页提供下载与“打开并继续”。
+网页 → 后端的任务副本 → 智能体（4096）→ 项目 MCP（stdio）→ FreeCAD 插件（9875）。生成文件由后端自动收集，网页在同一项目中自动展示新成果并继续原会话。
 
 当前重点是自主执行循环。历史实测已证实基本编程修改可行，也发现真实施工图保真问题；这些兼容性修复暂缓，详见 [验收记录](../docs/freecad-validation.md)。
 
@@ -10,11 +10,11 @@
 
 | 路径 | 用途 |
 | --- | --- |
-| `mcp/` | 完整上游 Git 子模块，可编辑源码；许可证为 MIT |
+| `mcp/` | 主仓库直接跟踪的 MCP 源码、插件、测试与依赖锁文件；许可证为 MIT |
 | `mcp/src/freecad_mcp/` | 模型调用的 MCP 工具与 FreeCAD 通信 |
 | `mcp/addon/FreeCADMCP/` | FreeCAD 内运行的插件；安装目录软链接到这里 |
 | `mcp/.venv/` | 按上游 `uv.lock` 安装的独立 Python 环境 |
-| `patches/`、`apply_patches.sh` | 父项目维护的 MCP 修改补丁；用于在干净子模块中复现源码修复 |
+| `mcp-source.json` | 上游来源、基线提交与许可证记录；仅用于追溯，不触发拉取 |
 | `runtime/` | 官方 FreeCAD 发行程序，不提交 Git |
 | `runtime.lock.json` | 官方包版本、下载地址、大小与 SHA-256 |
 | `requirements-python.txt` | FreeCAD 执行环境的额外依赖清单，固定包版本 |
@@ -38,7 +38,6 @@ FreeCAD、MCP 服务、本项目后端分别使用自己的 Python 环境。不�
 先完成根目录 README 中的项目环境安装，再在项目根目录执行：
 
 ```bash
-git submodule update --init -- freecad/mcp
 bash freecad/install.sh
 ```
 
@@ -48,17 +47,18 @@ bash freecad/install.sh
 
 MCP 依赖使用上游锁文件，安装为 editable 模式。更改 `mcp/src/` 后重启实验智能体；更改插件后重启 FreeCAD。插件通过软链接加载源码，不必每次手动复制。
 
-新主机克隆父项目时可加 `--recurse-submodules`。MCP 继续以公开上游子模块作为基线；父项目通过 `patches/` 保存本项目的源码差异，无需另外创建仓库。`install.sh` 在源码就绪后先应用补丁，再安装运行环境：正向检查通过才应用；反向检查通过说明已应用，重复安装不会重复修改；两种检查都失败则明确停止，保留现有源码，不执行强制覆盖或重置。
+`mcp/` 不再是子模块，也没有独立的 `.git`。直接修改源码，然后在项目根目录 `git add freecad/mcp/` 并提交即可；新的主机普通 `git clone` 就会得到本项目当前 MCP 源码。安装器只安装锁定的依赖和本地 editable 包，不会克隆、更新、重置上游源码。
 
-`mcp/` 始终是实际开发和调试入口，`patches/` 用于同步未来干净安装。修改 MCP 后，需同时更新对应补丁，包含新增源码与测试文件，并从子模块基线验证首次应用、重复应用和反向检查；仅提交父仓库不会自动收录子模块工作区的修改。当前 `python-diagnostics.patch` 基于上游 `751974609a401660a58a1772ef16f3afbeba9ba1`，修复 GUI/异步 Python 的错误行号、失败前输出及 stderr 回传，保留原有工具接口。子模块显示有本地修改是应用项目补丁后的正常状态。
+前一轮 GUI/异步 Python 的 stdout、stderr、traceback 修复已经直接包含在这些文件中。原来的 `patches/` 与补丁安装流程已移除，旧实现仍可通过主仓库历史查看。迁移时逐文件核对现有源码哈希，未修改工具接口或智能体行为。
 
-只应用源码补丁而不下载、安装软件：
+修改 `mcp/src/` 后重启智能体；修改 `mcp/addon/` 后重启 FreeCAD。许可证位于 `mcp/LICENSE`，上游文档和示例保留供开发参考；实际项目安装使用本文的脚本。`mcp/.venv/` 与缓存仍不提交 Git。
+
+源码测试（不启动 FreeCAD、不调用模型）：
 
 ```bash
-bash freecad/apply_patches.sh
+cd freecad/mcp
+.venv/bin/python -m pytest -q
 ```
-
-更换上游基线或修改补丁时，先保留自己的源码改动再处理冲突；安装脚本不会替你丢弃这些改动。对应复现测试为 `tests/test_freecad_patches.py`，只操作临时基线副本。
 
 ## 给 FreeCAD 补充 Python 依赖
 
@@ -85,7 +85,7 @@ bash freecad/install_python.sh --check
 
 库先安装到临时目录，验证版本、间接依赖与实际导入后才替换正式目录；失败保留旧安装。安装成功会更新 `python-deps.lock.json`，请把它和依赖清单一起提交 Git。相同清单和环境会复用锁文件中的 wheel 与 SHA-256；已安装且检查通过时无需再次下载。删除或改版依赖时也通过清单和安装命令重建目录，旧版本不会混留。
 
-日常启动只做离线检查，缺项会在打开 FreeCAD 窗口前明确报错。目录加载通过 FreeCAD 的 `-P` 参数完成，GUI 与 headless 共用 `run.sh`；依赖安装不修改官方 FreeCAD 核心；MCP 的执行诊断修复由上述源码补丁单独维护。
+日常启动只做离线检查，缺项会在打开 FreeCAD 窗口前明确报错。目录加载通过 FreeCAD 的 `-P` 参数完成，GUI 与 headless 共用 `run.sh`；依赖安装不修改官方 FreeCAD 核心；MCP 的执行诊断修复直接在主仓库源码中维护。
 
 依赖可用只证明 Python 文件操作环境就绪，不等于修复 FreeCAD 原生导入器的块、文字和坐标保真问题。
 
@@ -99,7 +99,7 @@ bash scripts/dev.sh
 
 打开 http://127.0.0.1:5173，在网页上传图纸并新建对话。无需准备实验输入清单，也无需启动 4097；图纸副本由后端按每轮请求自动准备。在启动终端按 Ctrl+C 一起停止。
 
-FreeCAD 日志位于 `.runtime/freecad/gui.log`，模型服务日志在 `.runtime/agent/server.log`。修改上游源码后重启对应服务即可。`start.sh`、`mcp.sh` 和下方诊断脚本保留用于组件开发，不是另一条网页编辑流程。
+FreeCAD 日志位于 `.runtime/freecad/gui.log`，模型服务日志在 `.runtime/agent/server.log`。修改项目 MCP 源码后重启对应服务即可。`start.sh`、`mcp.sh` 和下方诊断脚本保留用于组件开发，不是另一条网页编辑流程。
 
 ## 验证与范围
 

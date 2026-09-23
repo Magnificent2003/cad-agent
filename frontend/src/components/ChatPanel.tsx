@@ -7,7 +7,6 @@ import {
   ChevronRight,
   CircleAlert,
   FileSearch,
-  Download,
   History,
   LoaderCircle,
   MessageSquare,
@@ -20,14 +19,14 @@ import {
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { metadataInfo } from '../api/metadata'
-import { readableError, revisionLabel } from '../api/client'
-import type { Artifact, Drawing, Message, MessagePart, Session } from '../api/types'
+import { readableError } from '../api/client'
+import type { Drawing, Message, MessagePart, Session } from '../api/types'
 
 interface Props {
-  artifacts: Artifact[]
+  currentLabel: string
+  transitioning: boolean
   taskError: string
   archived: boolean
-  onOpenArtifact: (id: string) => void
   drawing: Drawing | null
   sessions: Session[]
   sessionId: string | null
@@ -92,10 +91,10 @@ function ToolPart({ part }: { part: MessagePart }) {
 export default function ChatPanel(props: Props) {
   const {
     drawing,
-    artifacts,
+    currentLabel,
+    transitioning,
     taskError,
     archived,
-    onOpenArtifact,
     sessions,
     sessionId,
     onSession,
@@ -122,10 +121,11 @@ export default function ChatPanel(props: Props) {
       message.error ||
       message.parts.some((part) => (part.type === 'text' && part.text) || part.type === 'tool'),
   )
-  const disabled = !drawing?.current_revision || historical || busy || messagesLoading || archived
+  const disabled =
+    !drawing?.current_revision || historical || busy || messagesLoading || archived || transitioning
 
   useEffect(() => {
-    if (followRef.current)
+    if (followRef.current && (visibleMessages.length > 0 || busy))
       scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages, busy])
   useEffect(() => {
@@ -163,7 +163,7 @@ export default function ChatPanel(props: Props) {
               <select
                 aria-label="历史对话"
                 value={sessionId || ''}
-                disabled={busy}
+                disabled={busy || transitioning}
                 onChange={(event) => onSession(event.target.value)}
               >
                 {!sessionId && <option value="">选择对话</option>}
@@ -180,7 +180,7 @@ export default function ChatPanel(props: Props) {
             className="icon-button"
             title="新建对话"
             aria-label="新建对话"
-            disabled={!drawing?.current_revision || busy}
+            disabled={!drawing?.current_revision || busy || transitioning}
             onClick={onNewSession}
           >
             <Plus size={17} />
@@ -299,41 +299,6 @@ export default function ChatPanel(props: Props) {
             </div>
           </article>
         ))}
-        {artifacts.length > 0 && (
-          <section className="artifact-list" aria-label="生成的文件">
-            <strong>生成的文件</strong>
-            <p>可打开仅表示文件已导入，工程内容请结合助手的检查结果核对。</p>
-            {artifacts.map((file) => (
-              <div className="artifact-card" key={file.id}>
-                <span className="artifact-name">{file.name}</span>
-                <small>
-                  {Math.ceil(file.bytes / 1024)} KB ·{' '}
-                  {file.preview_status === 'succeeded'
-                    ? '可打开'
-                    : ['queued', 'running'].includes(file.preview_status)
-                      ? '正在生成预览'
-                      : file.preview_status === 'failed'
-                        ? '预览失败，可下载检查'
-                        : '可下载'}
-                </small>
-                <div className="artifact-actions">
-                  <a href={file.download_url} download={file.name}>
-                    <Download size={13} />
-                    下载
-                  </a>
-                  {file.drawing_id && (
-                    <button
-                      disabled={busy || file.preview_status !== 'succeeded'}
-                      onClick={() => onOpenArtifact(file.id)}
-                    >
-                      打开并继续
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </section>
-        )}
         {taskError && (
           <p className="message-error" role="alert">
             {taskError}
@@ -384,11 +349,13 @@ export default function ChatPanel(props: Props) {
             placeholder={
               !drawing
                 ? '上传图纸，开始对话…'
-                : historical
-                  ? '回到当前版本后继续对话…'
-                  : busy
-                    ? '助手正在处理当前任务…'
-                    : '询问图纸信息，或描述需要的修改…'
+                : transitioning
+                  ? '正在更新图纸，请稍候…'
+                  : historical
+                    ? '回到当前版本后继续对话…'
+                    : busy
+                      ? '助手正在处理当前任务…'
+                      : '询问图纸信息，或描述需要的修改…'
             }
             onChange={(event) => onInput(event.target.value)}
             onKeyDown={(event) => {
@@ -423,7 +390,7 @@ export default function ChatPanel(props: Props) {
         <div className="composer-footnote">
           <span>
             {drawing?.current_revision
-              ? `基于 ${revisionLabel(drawing.current_revision)}，成果另存`
+              ? `当前：${currentLabel || drawing.name}`
               : '支持 DWG / DXF 格式'}
           </span>
           <span>

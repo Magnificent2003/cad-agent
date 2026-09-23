@@ -25,12 +25,13 @@ MCP 使用标准输入输出，由智能体自动启动。4097 实验服务已�
 
 ## 怎样使用
 
-1. 上传或选择 DWG/DXF。网页默认显示 SVG 预览。
-2. 新建对话，用自然语言提出任务。旧会话标记为“历史”，只供查看。
-3. 智能体自行检查对象、查询 API、编写脚本、执行并修正错误。修改发生在本轮工作副本中。
-4. 本轮结束后，网页显示生成的文件。可以直接下载；DXF/DWG 导入后可以点击 **打开并继续**，同一会话的下一轮将针对成果图纸工作。
+1. 左侧是可收起的工程项目栏，可新建、重命名和切换项目。上传的 DWG/DXF 加入当前项目，原有图纸按已有项目关系保留。
+2. 右上角用 `v0001_文件名`、`v0002_总平面图` 等名称集中展示项目内图纸及历史。网页默认显示 SVG，仍可切换 PNG 概览。
+3. 在左侧对话区提出任务。智能体按原有方式自主检查、编写和执行脚本，修改发生在工作副本中。
+4. 任务完成且新 CAD 文件预览就绪后，右侧自动显示新图纸，原会话继续使用该成果。一次生成多张图时，等待预览处理结束后显示最后一张可用成果，其余保留在下拉列表。
+5. 从下拉菜单查看历史图纸不会改变会话目标；此时输入区只读，点击 **回到当前版本** 后继续。右侧 **PNG / DXF / DWG** 按钮下载当前查看的图纸，CSV、图片、报告等在同一区域的 **文件** 菜单中下载。
 
-一次任务可以生成多个图纸或报告。分析和澄清不要求生成文件。FreeCAD 当前是共享的图形进程，同一时间只执行一个智能体任务；其他会话提交时会提示等待。
+项目图纸名称是展示用的连续编号，内部图纸 ID 和 `r0001` 等修订 ID 保持不变，原文件不会被重命名或覆盖。纯分析、报告输出以及预览失败不会替换当前图纸。FreeCAD 仍是共享进程，同一时间只执行一个智能体任务。
 
 停止对话会请求模型中断并禁止发布本轮成果。FreeCAD 已经开始的 Python 操作可能无法立即打断，网页会等待其结束；卡住时在启动终端按 Ctrl+C 停止全部服务后重新启动。
 
@@ -42,12 +43,12 @@ MCP 使用标准输入输出，由智能体自动启动。4097 实验服务已�
 flowchart LR
     UI[前端] --> API[后端：当前图纸工作副本]
     API --> Agent[智能体：自主分析与编程]
-    Agent --> MCP[原版 FreeCAD MCP]
+    Agent --> MCP[项目 FreeCAD MCP]
     MCP --> FC[FreeCAD 文档与 Python API]
     FC --> Agent
     Agent --> Output[本轮输出文件]
     Output --> API
-    API --> Result[预览、下载、打开并继续]
+    API --> Result[项目图纸历史、自动预览与下载]
 ```
 
 ```text
@@ -70,7 +71,7 @@ cad-agent/
 │   ├── runtime.py        运行环境与源码/发行程序选择
 │   └── engine/           可修改的智能体引擎源码
 ├── freecad/
-│   ├── mcp/              原版 FreeCAD MCP 源码（Git 子模块）
+│   ├── mcp/              项目 MCP 源码（主仓库直接管理）
 │   ├── runtime/          官方软件、DXF 可选库及 python-deps/ 专用依赖
 │   ├── requirements-python.txt  FreeCAD 额外 Python 依赖清单
 │   ├── install.sh        安装软件、依赖与插件
@@ -100,7 +101,7 @@ cad-agent/
 目前面向 Linux x86_64 / WSL2，FreeCAD 图形窗口需要可用的 Linux 桌面或 WSLg。Python 依赖以 `pyproject.toml` 和 `uv.lock` 为准；仅安装 Python 包不足以运行整个项目。
 
 ```bash
-git clone --recurse-submodules <你的仓库地址> cad-agent
+git clone <你的仓库地址> cad-agent
 cd cad-agent
 bash scripts/bootstrap.sh
 bash cad_converter/install.sh
@@ -111,7 +112,7 @@ bash freecad/install.sh
 
 FreeCAD 执行环境的额外依赖在 `freecad/requirements-python.txt` 中管理，安装到 `freecad/runtime/python-deps/`。新增依赖后运行 `bash freecad/install_python.sh`，再重新一键启动；GUI 与无界面 MCP 都能使用。详见 [依赖维护说明](freecad/README.md#给-freecad-补充-python-依赖)。
 
-`freecad/mcp/` 是可编辑上游源码，插件通过软链接加载。本项目对 Python 错误反馈的修复保存在 `freecad/patches/`，安装时会幂等应用；它保留失败前输出、stderr 和 traceback，帮助模型定位代码错误，未增加专用 CAD 业务操作。修改 MCP 服务源码后重启智能体；修改插件后重启全部服务。不要把后端 `.venv` 的包复制到 FreeCAD 自带 Python。
+`freecad/mcp/` 由本仓库直接管理源码，插件通过软链接加载，普通克隆即包含当前修改，无须初始化子模块或应用补丁。MIT 许可证和上游来源记录保留；Python 错误反馈修复已直接纳入源码。修改 MCP 服务源码后重启智能体；修改插件后重启全部服务。不要把后端 `.venv` 的包复制到 FreeCAD 自带 Python。
 
 ## 后续修改入口
 
@@ -149,6 +150,7 @@ pytest -q
 node --test tests/task-context.test.mjs
 ruff check agent/*.py backend scripts tests
 npm run build --prefix frontend
+npm run test:e2e --prefix frontend
 python scripts/verify_agent.py
 ```
 

@@ -14,15 +14,23 @@ import {
   X,
 } from 'lucide-react'
 import { TransformComponent, TransformWrapper } from 'react-zoom-pan-pinch'
-import { api, readableError, revisionLabel } from '../api/client'
+import { api, readableError } from '../api/client'
 import { layoutLabel, metadataInfo } from '../api/metadata'
-import type { Drawing, Metadata, Revision } from '../api/types'
+import DrawingFiles from './DrawingFiles'
+import type { Artifact, Drawing, Metadata, ProjectVersion } from '../api/types'
 
 interface Props {
   drawing: Drawing | null
-  revisions: Revision[]
+  versions: ProjectVersion[]
+  selectedKey: string
+  currentKey: string
+  onVersion: (key: string) => void
+  historical: boolean
+  onCurrent: () => void
+  artifacts: Artifact[]
+  downloading: string
+  onDownload: (format: 'png' | 'dxf' | 'dwg') => void
   revision: string
-  onRevision: (revision: string) => void
   layout: string
   onLayout: (layout: string) => void
   processing: boolean
@@ -32,9 +40,16 @@ interface Props {
 
 export default function DrawingViewer({
   drawing,
-  revisions,
+  versions,
+  selectedKey,
+  currentKey,
+  onVersion,
+  historical,
+  onCurrent,
+  artifacts,
+  downloading,
+  onDownload,
   revision,
-  onRevision,
   layout,
   onLayout,
   processing,
@@ -49,7 +64,7 @@ export default function DrawingViewer({
   const [showInfo, setShowInfo] = useState(false)
   const [scale, setScale] = useState(1)
   const info = metadataInfo(metadata)
-  const historical = Boolean(drawing?.current_revision && revision !== drawing.current_revision)
+  const selected = versions.find((item) => item.key === selectedKey)
 
   useEffect(() => {
     setFormat('svg')
@@ -112,38 +127,48 @@ export default function DrawingViewer({
           <span>图纸预览</span>
           <span className="quiet-tag">只读</span>
         </div>
-        <div className="viewer-selectors">
-          <label className="select-wrap">
-            <Layers3 size={14} />
-            <select
-              aria-label="图纸布局"
-              disabled={!revision}
-              value={layout}
-              onChange={(event) => onLayout(event.target.value)}
-            >
-              {info.layouts.map((name) => (
-                <option key={name} value={name}>
-                  {layoutLabel(name)}
-                </option>
-              ))}
-            </select>
-          </label>
+        <label className="version-picker">
+          <span className="visually-hidden">项目图纸与历史</span>
           <select
-            className="revision-select"
-            aria-label="图纸版本"
-            disabled={!revisions.length}
-            value={revision}
-            onChange={(event) => onRevision(event.target.value)}
+            aria-label="项目图纸与历史"
+            disabled={!versions.length}
+            value={selectedKey}
+            onChange={(event) => onVersion(event.target.value)}
           >
-            {!revisions.length && <option value="">尚无版本</option>}
-            {revisions.map((item) => (
-              <option value={item.id} key={item.id}>
-                {revisionLabel(item.id, item.number)}
-                {item.id === drawing?.current_revision ? ' · 当前' : ' · 历史'}
+            {!versions.length && <option value="">尚无图纸</option>}
+            {[...versions].reverse().map((item) => (
+              <option key={item.key} value={item.key}>
+                {item.label}
+                {item.key === currentKey ? ' · 当前' : ''}
               </option>
             ))}
           </select>
-        </div>
+        </label>
+      </div>
+      <div className="viewer-toolbar">
+        <label className="select-wrap">
+          <Layers3 size={14} />
+          <select
+            aria-label="图纸布局"
+            disabled={!revision}
+            value={layout}
+            onChange={(event) => onLayout(event.target.value)}
+          >
+            {info.layouts.map((name) => (
+              <option key={name} value={name}>
+                {layoutLabel(name)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <DrawingFiles
+          artifacts={artifacts}
+          versions={versions}
+          onView={onVersion}
+          downloadable={Boolean(revision)}
+          downloading={downloading}
+          onDownload={onDownload}
+        />
       </div>
       <div className="drawing-canvas">
         {drawing && revision && (
@@ -160,7 +185,7 @@ export default function DrawingViewer({
         {drawing && revision && (
           <div className="canvas-title">
             <span className="canvas-status-dot" />
-            {drawing.name}
+            {selected?.label || drawing.name}
             <span className="canvas-title-divider" />
             {layoutLabel(layout)}
           </div>
@@ -168,7 +193,7 @@ export default function DrawingViewer({
         {historical && (
           <div className="canvas-notice history-notice">
             正在查看历史版本
-            <button onClick={() => onRevision(drawing!.current_revision!)}>回到当前版本</button>
+            <button onClick={onCurrent}>回到当前版本</button>
           </div>
         )}
         {processing && drawing && revision && (
@@ -196,7 +221,7 @@ export default function DrawingViewer({
                   <img
                     className="drawing-image"
                     src={preview}
-                    alt={`${drawing?.name || '图纸'} · ${layoutLabel(layout)} · ${revisionLabel(revision)}`}
+                    alt={`${drawing?.name || '图纸'} · ${layoutLabel(layout)} · ${selected?.label || ''}`}
                     draggable={false}
                     onError={() => {
                       if (format === 'svg') setFormat('png')

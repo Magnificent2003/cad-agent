@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import chat, drawings, artifacts
+from .api import chat, drawings, artifacts, projects
 from .config import ROOT, Settings, get_settings
 from .events import EventBus
 from .jobs import JobConflict, JobManager
@@ -112,6 +112,7 @@ def create_app(settings: Settings | None = None, agent_client=None):
             connected = False
         return {"status": "ok", "agent": "connected" if connected else "disconnected", "dwg_available": settings.converter_available, "engine": "freecad", "rag": "not_configured", "max_upload_mb": settings.cad_max_upload_mb}
 
+    app.include_router(projects.router)
     app.include_router(drawings.router)
     app.include_router(chat.router)
     app.include_router(artifacts.router)

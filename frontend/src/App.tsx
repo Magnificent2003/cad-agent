@@ -1,151 +1,220 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Check,
-  ChevronDown,
   CircleAlert,
-  Download,
-  FileStack,
   FileUp,
+  FolderOpen,
   LoaderCircle,
   PanelLeft,
   RefreshCw,
-  Shield,
   X,
 } from 'lucide-react'
 import ChatPanel from './components/ChatPanel'
 import DrawingViewer from './components/DrawingViewer'
-import { api, readableError, revisionLabel } from './api/client'
+import ProjectSidebar from './components/ProjectSidebar'
+import { api, readableError, saveBlob } from './api/client'
 import { metadataInfo } from './api/metadata'
 import { useSessionEvents } from './api/useSessionEvents'
-import type { Artifact, Drawing, Message, Revision, Session, SessionEvent } from './api/types'
+import type { Drawing, Message, Project, Revision, SessionEvent, Workbench } from './api/types'
 
 const delay = (milliseconds: number) =>
   new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+const latestFor = (workspace: Workbench, drawingId?: string | null) =>
+  workspace.versions.find((v) => v.drawing_id === drawingId && v.revision_id === v.current_revision)
 
 export default function App() {
-  const [drawings, setDrawings] = useState<Drawing[]>([])
-  const [drawingId, setDrawingId] = useState<string | null>(null)
-  const [drawing, setDrawing] = useState<Drawing | null>(null)
-  const [revisions, setRevisions] = useState<Revision[]>([])
-  const [revision, setRevision] = useState('')
+  const [projects, setProjects] = useState<Project[]>([])
+  const [projectId, setProjectId] = useState<string | null>(null)
+  const [workspace, setWorkspace] = useState<Workbench | null>(null)
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return window.innerWidth < 1100 || localStorage.getItem('cad-project-sidebar') === 'collapsed'
+    } catch {
+      return true
+    }
+  })
+  // Viewing a historical file must not silently change the agent's input.
+  const [targetDrawingId, setTargetDrawingId] = useState<string | null>(null)
+  const [viewKey, setViewKey] = useState('')
+  const [drawingCache, setDrawingCache] = useState<Record<string, Drawing>>({})
+  const [revisionCache, setRevisionCache] = useState<Record<string, Revision[]>>({})
   const [layout, setLayout] = useState('Model')
-  const [sessions, setSessions] = useState<Session[]>([])
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
-  const [artifacts, setArtifacts] = useState<Artifact[]>([])
-  const [taskError, setTaskError] = useState('')
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [syncingResult, setSyncingResult] = useState(false)
   const [loading, setLoading] = useState(true)
   const [health, setHealth] = useState<'checking' | 'online' | 'offline'>('checking')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [downloadMenu, setDownloadMenu] = useState(false)
+  const [taskError, setTaskError] = useState('')
   const [downloading, setDownloading] = useState('')
   const [dragging, setDragging] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
-  const activeDrawing = useRef<string | null>(null)
-  const activeSession = useRef<string | null>(null)
-  const drawingRef = useRef<Drawing | null>(null)
-  const revisionRef = useRef('')
-  const refreshTimer = useRef<number | undefined>(undefined)
+  const activeProject = useRef(projectId)
+  const activeSession = useRef(sessionId)
+  const targetRef = useRef(targetDrawingId)
+  const workspaceSequence = useRef(0)
   const messageSequence = useRef(0)
+  const messageTimer = useRef<number | undefined>(undefined)
   const sendLock = useRef(false)
   const stopLock = useRef(false)
+  const handledTasks = useRef(new Set<string>())
   const dragDepth = useRef(0)
-  activeDrawing.current = drawingId
+  activeProject.current = projectId
   activeSession.current = sessionId
-  drawingRef.current = drawing
-  revisionRef.current = revision
+  targetRef.current = targetDrawingId
 
-  const refreshDrawing = useCallback(async (id: string, forceCurrent = false) => {
-    const [nextDrawing, nextRevisions] = await Promise.all([api.drawing(id), api.revisions(id)])
-    if (activeDrawing.current !== id) return
-    const wasCurrent =
-      !revisionRef.current || revisionRef.current === drawingRef.current?.current_revision
-    setDrawing(nextDrawing)
-    setRevisions(nextRevisions)
-    setRevision((previous) =>
-      forceCurrent || wasCurrent || !nextRevisions.some((item) => item.id === previous)
-        ? nextDrawing.current_revision || ''
-        : previous,
-    )
-    setDrawings((previous) =>
-      previous.some((item) => item.id === id)
-        ? previous.map((item) => (item.id === id ? nextDrawing : item))
-        : [...previous, nextDrawing],
-    )
+  const refreshWorkspace = useCallback(async (id: string) => {
+    const sequence = ++workspaceSequence.current
+    const next = await api.workbench(id)
+    if (activeProject.current === id && sequence === workspaceSequence.current) setWorkspace(next)
+    return next
   }, [])
-
   const refreshMessages = useCallback(async (id: string) => {
     const sequence = ++messageSequence.current
-    const nextMessages = await api.messages(id)
-    if (activeSession.current === id && sequence === messageSequence.current)
-      setMessages(nextMessages)
+    const next = await api.messages(id)
+    if (activeSession.current === id && sequence === messageSequence.current) setMessages(next)
   }, [])
-
-  const reload = useCallback(async () => {
-    setLoading(true)
-    const [healthResult, drawingsResult] = await Promise.allSettled([api.health(), api.drawings()])
+  const reloadProjects = useCallback(async () => {
+    const [healthResult, projectResult] = await Promise.allSettled([api.health(), api.projects()])
     setHealth(healthResult.status === 'fulfilled' ? 'online' : 'offline')
-    if (drawingsResult.status === 'fulfilled') {
-      setDrawings(drawingsResult.value)
-      setDrawingId((previous) =>
-        previous && drawingsResult.value.some((item) => item.id === previous)
+    if (projectResult.status === 'fulfilled') {
+      setProjects(projectResult.value)
+      setProjectId((previous) =>
+        previous && projectResult.value.some((p) => p.id === previous)
           ? previous
-          : drawingsResult.value[0]?.id || null,
+          : projectResult.value[0]?.id || null,
       )
-    } else setError(readableError(drawingsResult.reason))
-    setLoading(false)
+      if (!projectResult.value.length) setLoading(false)
+    } else {
+      setError(readableError(projectResult.reason))
+      setLoading(false)
+    }
   }, [])
-
   useEffect(() => {
-    void reload()
-  }, [reload])
+    void reloadProjects()
+  }, [reloadProjects])
+  useEffect(() => {
+    try {
+      localStorage.setItem('cad-project-sidebar', collapsed ? 'collapsed' : 'expanded')
+    } catch {
+      /* Optional preference. */
+    }
+    const close = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setCollapsed(true)
+    }
+    window.addEventListener('keydown', close)
+    return () => window.removeEventListener('keydown', close)
+  }, [collapsed])
   useEffect(() => {
     if (!notice) return
-    const timer = window.setTimeout(() => setNotice(''), 6000)
+    const timer = window.setTimeout(() => setNotice(''), 6500)
     return () => window.clearTimeout(timer)
   }, [notice])
 
   useEffect(() => {
-    setDrawing(null)
-    setRevisions([])
-    setRevision('')
-    setLayout('Model')
-    setSessions([])
+    setWorkspace(null)
+    setTargetDrawingId(null)
+    setViewKey('')
     setSessionId(null)
     setMessages([])
     setInput('')
+    setTaskError('')
     setBusy(false)
     setStopping(false)
-    if (!drawingId) return
+    setSyncingResult(false)
+    if (!projectId) return
+    setLoading(true)
     let cancelled = false
-    void refreshDrawing(drawingId, true).catch((cause) => {
+    let inFlight = false
+    let initialized = false
+    const refresh = async () => {
+      if (inFlight) return
+      inFlight = true
+      try {
+        const next = await refreshWorkspace(projectId)
+        if (cancelled) return
+        if (!initialized) {
+          initialized = true
+          const session = next.sessions.find((s) => s.engine === 'freecad')
+          const version = latestFor(next, session?.drawing_id) || next.versions.at(-1)
+          setTargetDrawingId(session?.drawing_id || version?.drawing_id || null)
+          setViewKey(version?.key || '')
+          setSessionId(session?.id || null)
+          setBusy(session?.status === 'busy')
+        }
+        setLoading(false)
+      } catch (cause) {
+        if (!cancelled) {
+          setError(readableError(cause))
+          setLoading(false)
+        }
+      } finally {
+        inFlight = false
+      }
+    }
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 2000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [projectId, refreshWorkspace])
+
+  const viewVersion = workspace?.versions.find((v) => v.key === viewKey)
+  const currentVersion = workspace ? latestFor(workspace, targetDrawingId) : undefined
+  const drawing = targetDrawingId ? drawingCache[targetDrawingId] || null : null
+  const viewDrawing = viewVersion ? drawingCache[viewVersion.drawing_id] || null : null
+  const historical = Boolean(viewKey && currentVersion && viewKey !== currentVersion.key)
+  const selectedMetadata =
+    revisionCache[viewVersion?.drawing_id || '']?.find((r) => r.id === viewVersion?.revision_id)
+      ?.metadata ||
+    viewDrawing?.metadata ||
+    {}
+  const info = metadataInfo(selectedMetadata)
+  const locked = busy || importing || syncingResult || loading
+
+  useEffect(() => {
+    setLayout('Model')
+  }, [viewKey])
+  useEffect(() => {
+    if (!info.layouts.includes(layout)) setLayout(info.layouts[0] || 'Model')
+  }, [layout, info.layouts.join('|')])
+  useEffect(() => {
+    let cancelled = false
+    const ids = [
+      ...new Set(
+        [targetDrawingId, viewVersion?.drawing_id].filter((id): id is string => Boolean(id)),
+      ),
+    ]
+    void Promise.all(
+      ids.map(async (id) => {
+        const [file, revisions] = await Promise.all([api.drawing(id), api.revisions(id)])
+        if (!cancelled) {
+          setDrawingCache((old) => ({ ...old, [id]: file }))
+          setRevisionCache((old) => ({ ...old, [id]: revisions }))
+        }
+      }),
+    ).catch((cause) => {
       if (!cancelled) setError(readableError(cause))
     })
-    void api
-      .sessions(drawingId)
-      .then((items) => {
-        if (cancelled) return
-        setSessions(items)
-        const current = items.find((item) => item.engine === 'freecad')
-        setSessionId(current?.id || null)
-        setBusy(current?.status === 'busy')
-      })
-      .catch((cause) => {
-        if (!cancelled) setError(readableError(cause))
-      })
     return () => {
       cancelled = true
     }
-  }, [drawingId, refreshDrawing])
-
+  }, [
+    targetDrawingId,
+    viewVersion?.drawing_id,
+    viewVersion?.revision_id,
+    currentVersion?.revision_id,
+  ])
   useEffect(() => {
     setMessages([])
+    setTaskError('')
     if (!sessionId) {
       setMessagesLoading(false)
       return
@@ -161,25 +230,77 @@ export default function App() {
   }, [sessionId, refreshMessages])
 
   useEffect(() => {
-    setArtifacts([])
-    setTaskError('')
-    if (!sessionId) return
+    if (!sessionId || !projectId) return
     let cancelled = false
+    let inFlight = false
     const refresh = async () => {
+      if (inFlight) return
+      inFlight = true
       try {
         const [files, status] = await Promise.all([
           api.artifacts(sessionId),
           api.sessionStatus(sessionId),
         ])
-        if (cancelled || activeSession.current !== sessionId) return
-        setArtifacts(files.artifacts)
+        if (cancelled || activeSession.current !== sessionId || activeProject.current !== projectId)
+          return
         setTaskError(files.task?.error || '')
         if (!sendLock.current && !stopLock.current) {
           setBusy(status.status === 'busy')
           if (status.status !== 'busy') setStopping(false)
         }
+        const task = files.task
+        if (
+          !task ||
+          task.status !== 'completed' ||
+          handledTasks.current.has(task.id) ||
+          status.status === 'busy' ||
+          sendLock.current
+        )
+          return
+        const cadFiles = files.artifacts.filter((f) => f.task_id === task.id && f.drawing_id)
+        // Wait for all CAD previews in this task, then adopt exactly one latest result.
+        if (cadFiles.some((f) => ['queued', 'running'].includes(f.preview_status))) {
+          setSyncingResult(true)
+          return
+        }
+        const candidate = cadFiles.filter((f) => f.preview_status === 'succeeded').at(-1)
+        if (!candidate || candidate.drawing_id === targetRef.current) {
+          handledTasks.current.add(task.id)
+          setSyncingResult(false)
+          return
+        }
+        setSyncingResult(true)
+        try {
+          const adopted = await api.openArtifact(candidate.id)
+          if (
+            cancelled ||
+            activeSession.current !== sessionId ||
+            activeProject.current !== projectId
+          )
+            return
+          const next = await refreshWorkspace(projectId)
+          if (
+            cancelled ||
+            activeSession.current !== sessionId ||
+            activeProject.current !== projectId
+          )
+            return
+          setTargetDrawingId(adopted.drawing_id)
+          setViewKey(latestFor(next, adopted.drawing_id)?.key || '')
+          setNotice(
+            `已显示新图纸：${latestFor(next, adopted.drawing_id)?.label || candidate.name}，可继续对话。`,
+          )
+          handledTasks.current.add(task.id)
+          await refreshMessages(sessionId)
+        } catch (cause) {
+          if (!cancelled) setError(readableError(cause))
+        } finally {
+          if (!cancelled) setSyncingResult(false)
+        }
       } catch {
-        /* Connection status and normal requests report service failures. */
+        /* Other requests and connection state report network failures. */
+      } finally {
+        inFlight = false
       }
     }
     void refresh()
@@ -188,156 +309,123 @@ export default function App() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [sessionId])
-
-  const openArtifact = async (id: string) => {
-    try {
-      const result = await api.openArtifact(id)
-      setDrawingId(result.drawing_id)
-      setNotice('已切换到成果图纸，继续对话将使用这份文件。')
-    } catch (cause) {
-      setError(readableError(cause))
-    }
-  }
+  }, [sessionId, projectId, refreshWorkspace, refreshMessages])
 
   const onEvent = useCallback(
     (event: SessionEvent) => {
-      const properties = (event.properties || {}) as Record<string, unknown>
-      if (event.type.startsWith('message.')) {
-        if (refreshTimer.current === undefined)
-          refreshTimer.current = window.setTimeout(() => {
-            refreshTimer.current = undefined
+      if (
+        event.type.startsWith('message.') ||
+        event.type === 'session.idle' ||
+        event.type === 'session.status'
+      ) {
+        if (messageTimer.current === undefined)
+          messageTimer.current = window.setTimeout(() => {
+            messageTimer.current = undefined
             if (activeSession.current)
-              void refreshMessages(activeSession.current).catch((cause) =>
-                setError(readableError(cause)),
-              )
+              void refreshMessages(activeSession.current).catch(() => undefined)
           }, 250)
       }
-      if (event.type === 'session.status' || event.type === 'session.idle') {
-        const rawStatus = event.status || properties.status
-        const status =
-          typeof rawStatus === 'string' ? rawStatus : (rawStatus as { type?: string })?.type
-        if (status === 'busy' || status === 'retry') setBusy(true)
-        if ((status === 'idle' || event.type === 'session.idle') && !stopLock.current) {
-          setBusy(false)
-          setStopping(false)
-          if (activeSession.current)
-            void refreshMessages(activeSession.current).catch((cause) =>
-              setError(readableError(cause)),
-            )
-        }
-      }
-      if (event.type === 'session.error' || event.type === 'error') {
-        const rawError = event.error || properties.error
-        const message =
-          typeof rawError === 'string'
-            ? rawError
-            : (rawError as { message?: string; data?: { message?: string } })?.message ||
-              (rawError as { data?: { message?: string } })?.data?.message
-        setError(readableError(new Error(message || '助手处理未完成，请重试。')))
-        if (!stopLock.current) {
-          setBusy(false)
-          setStopping(false)
-        }
-      }
-      if (event.type === 'drawing.updated' && activeDrawing.current) {
-        const eventDrawing = event.drawing_id || properties.drawing_id
-        if (!eventDrawing || eventDrawing === activeDrawing.current) {
-          void refreshDrawing(activeDrawing.current).catch((cause) =>
-            setError(readableError(cause)),
-          )
-          setNotice('图纸新版本已保存，预览已同步。')
-        }
-      }
-      if (event.type === 'job.updated') {
-        const status = event.status || properties.status
-        if (!stopLock.current && (status === 'cancelled' || status === 'interrupted')) {
-          setBusy(false)
-          setStopping(false)
-          setNotice('任务已停止。')
-        }
-      }
+      if (
+        ['drawing.updated', 'artifacts.updated', 'job.updated'].includes(event.type) &&
+        activeProject.current
+      )
+        void refreshWorkspace(activeProject.current).catch(() => undefined)
+      // Busy/idle ownership comes from the business task, not a model's intermediate stop.
+      if (event.type === 'session.error') setError('助手处理未完成，请检查任务提示后重试。')
     },
-    [refreshDrawing, refreshMessages],
+    [refreshMessages, refreshWorkspace],
   )
-
   const onReconnect = useCallback(() => {
-    if (activeSession.current)
-      void refreshMessages(activeSession.current).catch((cause) => setError(readableError(cause)))
-    const targetSession = activeSession.current
-    if (targetSession)
-      void api
-        .sessionStatus(targetSession)
-        .then((result) => {
-          if (activeSession.current === targetSession && !sendLock.current && !stopLock.current)
-            setBusy(result.status === 'busy')
-        })
-        .catch((cause) => setError(readableError(cause)))
-    if (activeDrawing.current)
-      void refreshDrawing(activeDrawing.current).catch((cause) => setError(readableError(cause)))
-  }, [refreshMessages, refreshDrawing])
+    if (activeSession.current) void refreshMessages(activeSession.current).catch(() => undefined)
+    if (activeProject.current) void refreshWorkspace(activeProject.current).catch(() => undefined)
+  }, [refreshMessages, refreshWorkspace])
   const { connected, waitUntilConnected } = useSessionEvents(sessionId, onEvent, onReconnect)
   useEffect(
     () => () => {
-      if (refreshTimer.current !== undefined) window.clearTimeout(refreshTimer.current)
+      if (messageTimer.current !== undefined) window.clearTimeout(messageTimer.current)
     },
     [],
   )
 
+  const selectProject = (id: string) => {
+    if (locked) return
+    activeProject.current = id
+    activeSession.current = null
+    setProjectId(id)
+    setError('')
+    if (window.innerWidth < 1100) setCollapsed(true)
+  }
+  const selectSession = (id: string) => {
+    const session = workspace?.sessions.find((s) => s.id === id)
+    if (!session || locked || !workspace) return
+    activeSession.current = id
+    setSessionId(id)
+    setTargetDrawingId(session.drawing_id || null)
+    setViewKey(latestFor(workspace, session.drawing_id)?.key || '')
+    setBusy(session.status === 'busy')
+    setStopping(false)
+    setInput('')
+  }
+  const saveProject = async (name: string, id?: string) => {
+    try {
+      const project = id ? await api.renameProject(id, name) : await api.createProject(name)
+      setProjects(await api.projects())
+      if (id) {
+        if (id === activeProject.current) await refreshWorkspace(id)
+      } else selectProject(project.id)
+    } catch (cause) {
+      setError(readableError(cause))
+      throw cause
+    }
+  }
   const upload = async (file: File) => {
-    if (importing || busy) return
+    if (locked || !projectId) return
     if (!/\.(dwg|dxf)$/i.test(file.name)) {
       setError('请选择 DWG 或 DXF 格式的图纸。')
       return
     }
     setError('')
-    setNotice('')
     setImporting(true)
     try {
-      const result = await api.upload(file)
-      setDrawingId(result.drawing_id)
+      const result = await api.upload(file, projectId)
       for (let attempt = 0; attempt < 600; attempt++) {
         const job = await api.job(result.job_id)
         if (['completed', 'succeeded', 'success'].includes(job.status)) {
-          await refreshDrawing(result.drawing_id, true)
-          setNotice('图纸导入完成，可以开始查看和对话。')
+          const next = await refreshWorkspace(projectId)
+          setTargetDrawingId(result.drawing_id)
+          setViewKey(latestFor(next, result.drawing_id)?.key || '')
+          setSessionId(null)
+          setInput('')
+          setMessages([])
+          setNotice('图纸已加入当前项目，可以开始查看和对话。')
           return
         }
-        if (['failed', 'cancelled', 'interrupted'].includes(job.status)) {
-          await refreshDrawing(result.drawing_id, true)
+        if (['failed', 'cancelled', 'interrupted'].includes(job.status))
           throw new Error(job.error || '图纸导入未完成，请重试。')
-        }
         await delay(1500)
       }
-      setNotice('图纸仍在后台处理中，请稍后刷新查看。')
+      setNotice('图纸仍在后台处理中，完成后可从项目图纸列表选择。')
     } catch (cause) {
       setError(readableError(cause))
     } finally {
       setImporting(false)
     }
   }
-
   const createSession = async () => {
-    if (!drawingId || busy) return null
-    const result = await api.createSession(drawingId)
-    setSessions((previous) => [result, ...previous])
+    if (!targetDrawingId || busy || importing || syncingResult) return null
+    const result = await api.createSession(targetDrawingId)
+    activeSession.current = result.id
     setSessionId(result.id)
     setMessages([])
+    setViewKey(currentVersion?.key || '')
+    if (projectId) await refreshWorkspace(projectId)
     return result.id
   }
-
   const send = async () => {
-    if (
-      sendLock.current ||
-      busy ||
-      !input.trim() ||
-      !drawing?.current_revision ||
-      revision !== drawing.current_revision
-    )
+    if (sendLock.current || locked || historical || !input.trim() || !drawing?.current_revision)
       return
     sendLock.current = true
     const text = input.trim()
-    const expectedRevision = drawing.current_revision
     const optimisticId = `pending-${Date.now()}`
     setError('')
     try {
@@ -345,25 +433,22 @@ export default function App() {
       if (!target) return
       setBusy(true)
       await waitUntilConnected(target)
-      setBusy(true)
       setInput('')
-      setMessages((previous) => [
-        ...previous,
+      setMessages((old) => [
+        ...old,
         { id: optimisticId, role: 'user', parts: [{ type: 'text', text }] },
       ])
-      await api.send(target, text, expectedRevision)
+      await api.send(target, text, drawing.current_revision)
       await refreshMessages(target)
     } catch (cause) {
       setError(readableError(cause))
       setBusy(false)
       setInput(text)
-      setMessages((previous) => previous.filter((item) => item.id !== optimisticId))
-      if (activeDrawing.current) void refreshDrawing(activeDrawing.current).catch(() => undefined)
+      setMessages((old) => old.filter((m) => m.id !== optimisticId))
     } finally {
       sendLock.current = false
     }
   }
-
   const stop = async () => {
     if (!sessionId || stopping) return
     stopLock.current = true
@@ -383,13 +468,11 @@ export default function App() {
       stopLock.current = false
     }
   }
-
   const download = async (format: 'dxf' | 'png' | 'dwg') => {
-    if (!drawing || !revision || downloading) return
-    setDownloadMenu(false)
+    if (!viewVersion || downloading) return
     setDownloading(format)
     setError('')
-    const url = api.download(drawing.id, revision, layout, format)
+    const url = api.download(viewVersion.drawing_id, viewVersion.revision_id, layout, format)
     try {
       for (let attempt = 0; attempt < 120; attempt++) {
         const response = await fetch(url)
@@ -409,14 +492,7 @@ export default function App() {
             typeof body.detail === 'string' ? body.detail : '导出暂不可用，请稍后重试。',
           )
         }
-        const objectUrl = URL.createObjectURL(await response.blob())
-        const link = document.createElement('a')
-        link.href = objectUrl
-        link.download = `${drawing.name.replace(/\.(dwg|dxf)$/i, '')}_${revisionLabel(revision)}.${format}`
-        document.body.appendChild(link)
-        link.click()
-        link.remove()
-        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+        saveBlob(await response.blob(), `${viewVersion.label}.${format}`)
         setNotice(`${format.toUpperCase()} 已准备好下载。`)
         return
       }
@@ -428,17 +504,9 @@ export default function App() {
     }
   }
 
-  const selectedMetadata =
-    revisions.find((item) => item.id === revision)?.metadata || drawing?.metadata || {}
-  const info = metadataInfo(selectedMetadata)
-  useEffect(() => {
-    if (!info.layouts.includes(layout)) setLayout(info.layouts[0] || 'Model')
-  }, [layout, info.layouts.join('|')])
-  const historical = Boolean(drawing?.current_revision && revision !== drawing.current_revision)
-
   return (
     <main
-      className="app-shell"
+      className={`app-shell ${collapsed ? 'sidebar-collapsed' : ''}`}
       onDragEnter={(event) => {
         if (Array.from(event.dataTransfer.types).includes('Files')) {
           event.preventDefault()
@@ -461,130 +529,166 @@ export default function App() {
         if (event.dataTransfer.files[0]) void upload(event.dataTransfer.files[0])
       }}
     >
-      <header className="app-header">
-        <a className="brand" href="/" aria-label="CAD Agent 工作台">
-          <span className="brand-mark">
-            <svg width="22" height="24" viewBox="0 0 22 24" fill="none" aria-hidden="true">
-              <path
-                d="M11 2L21 7.5V16.5L11 22L1 16.5V7.5L11 2Z"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              />
-              <path
-                d="M11 2V11.5M1 7.5L11 13L21 7.5M11 13V22M6 10V15L11 18L16 15V10"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              />
-            </svg>
-          </span>
-          <span>
-            CAD<span className="brand-light"> Agent</span>
-          </span>
-        </a>
-        <span className="header-divider" />
-        <div className="workspace-name">
-          <PanelLeft size={15} />
-          <span>图纸工作台</span>
-        </div>
-        <div className="drawing-picker">
-          <FileStack size={15} />
-          <select
-            aria-label="选择图纸"
-            value={drawingId || ''}
-            disabled={!drawings.length || importing || busy}
-            onChange={(event) => setDrawingId(event.target.value)}
-          >
-            {!drawings.length && (
-              <option value="">{loading ? '正在读取图纸…' : '尚未选择图纸'}</option>
-            )}
-            {drawings.map((item) => (
-              <option value={item.id} key={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="header-actions">
-          {drawing?.current_revision && (
-            <span className="current-version">
-              <i />
-              {revisionLabel(drawing.current_revision)}
-            </span>
-          )}
-          <input
-            type="file"
-            ref={fileRef}
-            className="visually-hidden"
-            aria-label="上传 CAD 图纸"
-            accept=".dwg,.dxf"
-            onChange={(event) => {
-              if (event.target.files?.[0]) void upload(event.target.files[0])
-              event.target.value = ''
-            }}
-          />
+      {!collapsed && (
+        <button
+          className="sidebar-backdrop"
+          aria-label="关闭项目栏"
+          onClick={() => setCollapsed(true)}
+        />
+      )}
+      <ProjectSidebar
+        projects={projects}
+        selected={projectId}
+        collapsed={collapsed}
+        disabled={locked}
+        onCollapse={() => setCollapsed(true)}
+        onSelect={selectProject}
+        onCreate={(name) => saveProject(name)}
+        onRename={(id, name) => saveProject(name, id)}
+      />
+      <div className="workspace-shell">
+        <header className="app-header">
           <button
-            className="button upload-button"
-            disabled={importing || busy}
-            onClick={() => fileRef.current?.click()}
+            className="icon-button sidebar-toggle"
+            onClick={() => setCollapsed((old) => !old)}
+            aria-label={collapsed ? '展开项目栏' : '收起项目栏'}
+            aria-expanded={!collapsed}
+            title={collapsed ? '展开项目栏' : '收起项目栏'}
           >
-            {importing ? <LoaderCircle size={15} className="spin" /> : <FileUp size={15} />}
-            <span>{importing ? '正在导入' : '上传图纸'}</span>
+            <PanelLeft size={19} />
           </button>
-          <div className="download-control">
+          <div className="project-breadcrumb">
+            <FolderOpen size={17} />
+            <div>
+              <small>工程项目</small>
+              <strong>
+                {workspace?.project.name ||
+                  projects.find((p) => p.id === projectId)?.name ||
+                  '图纸工作台'}
+              </strong>
+            </div>
+          </div>
+          <div className="header-actions">
+            <span className="project-version-count">{workspace?.versions.length || 0} 份图纸</span>
+            <input
+              ref={fileRef}
+              type="file"
+              className="visually-hidden"
+              aria-label="上传 CAD 图纸"
+              accept=".dwg,.dxf"
+              onChange={(event) => {
+                if (event.target.files?.[0]) void upload(event.target.files[0])
+                event.target.value = ''
+              }}
+            />
             <button
-              className="button button-primary"
-              disabled={!revision || Boolean(downloading)}
-              onClick={() => setDownloadMenu((value) => !value)}
-              aria-expanded={downloadMenu}
+              className="button upload-button"
+              disabled={locked || !projectId}
+              onClick={() => fileRef.current?.click()}
             >
-              {downloading ? <LoaderCircle size={15} className="spin" /> : <Download size={15} />}
-              <span>{downloading ? '正在导出' : '下载'}</span>
-              <ChevronDown size={13} />
+              {importing ? <LoaderCircle size={15} className="spin" /> : <FileUp size={15} />}
+              <span>{importing ? '正在导入' : '上传图纸'}</span>
             </button>
-            {downloadMenu && (
+          </div>
+        </header>
+        {error && (
+          <div className="alert-banner" role="alert">
+            <CircleAlert size={16} />
+            <span>{error}</span>
+            <button
+              className="icon-button"
+              aria-label={health === 'offline' ? '重新连接' : '关闭提示'}
+              onClick={() => {
+                setError('')
+                if (health === 'offline') void reloadProjects()
+              }}
+            >
+              {health === 'offline' ? <RefreshCw size={15} /> : <X size={15} />}
+            </button>
+          </div>
+        )}
+        <div className="workbench">
+          <ChatPanel
+            drawing={drawing}
+            currentLabel={currentVersion?.label || ''}
+            taskError={taskError}
+            transitioning={syncingResult || importing || loading}
+            archived={Boolean(
+              sessionId && workspace?.sessions.find((s) => s.id === sessionId)?.engine === 'legacy',
+            )}
+            sessions={workspace?.sessions || []}
+            sessionId={sessionId}
+            onSession={selectSession}
+            onNewSession={() => {
+              void createSession().catch((cause) => setError(readableError(cause)))
+            }}
+            messages={messages}
+            messagesLoading={messagesLoading}
+            input={input}
+            onInput={setInput}
+            onSend={() => void send()}
+            onStop={() => void stop()}
+            busy={busy}
+            stopping={stopping}
+            connected={connected}
+            historical={historical}
+            onCurrentRevision={() => setViewKey(currentVersion?.key || '')}
+          />
+          <DrawingViewer
+            drawing={viewDrawing}
+            versions={workspace?.versions || []}
+            selectedKey={viewKey}
+            currentKey={currentVersion?.key || ''}
+            onVersion={setViewKey}
+            revision={viewVersion?.revision_id || ''}
+            layout={layout}
+            onLayout={setLayout}
+            historical={historical}
+            onCurrent={() => setViewKey(currentVersion?.key || '')}
+            processing={importing || busy || syncingResult || loading}
+            onUpload={() => fileRef.current?.click()}
+            metadata={selectedMetadata}
+            artifacts={workspace?.artifacts || []}
+            downloading={downloading}
+            onDownload={(format) => void download(format)}
+          />
+        </div>
+        <footer className="status-bar">
+          <div>
+            <span className={`service-dot ${health}`} />
+            <span>
+              {health === 'online'
+                ? '服务已连接'
+                : health === 'checking'
+                  ? '正在连接服务'
+                  : '服务未连接'}
+            </span>
+            <span className="status-divider" />
+            <span>
+              {importing
+                ? '正在导入图纸'
+                : syncingResult
+                  ? '正在更新成果预览'
+                  : stopping
+                    ? '正在停止任务'
+                    : busy
+                      ? '助手处理中'
+                      : '就绪'}
+            </span>
+          </div>
+          <div>
+            {viewVersion && (
               <>
-                <button
-                  className="menu-backdrop"
-                  aria-label="关闭下载菜单"
-                  onClick={() => setDownloadMenu(false)}
-                />
-                <div className="download-menu">
-                  <span>下载所选版本 {revisionLabel(revision)}</span>
-                  {(['dxf', 'png', 'dwg'] as const).map((format) => (
-                    <button key={format} onClick={() => void download(format)}>
-                      <span>{format.toUpperCase()}</span>
-                      <small>
-                        {format === 'dxf'
-                          ? '可编辑图纸'
-                          : format === 'png'
-                            ? '当前布局预览'
-                            : '转换后下载'}
-                      </small>
-                      <Download size={13} />
-                    </button>
-                  ))}
-                </div>
+                <span>单位：{info.unit}</span>
+                <span className="status-divider" />
+                <span>{info.layerCount} 图层</span>
               </>
             )}
+            <span className="status-divider" />
+            <span>原图与历史图纸保留</span>
           </div>
-        </div>
-      </header>
-      {error && (
-        <div className="alert-banner" role="alert">
-          <CircleAlert size={16} />
-          <span>{error}</span>
-          <button
-            onClick={() => {
-              setError('')
-              if (health === 'offline') void reload()
-            }}
-            className="icon-button"
-            aria-label={health === 'offline' ? '重新连接' : '关闭提示'}
-          >
-            {health === 'offline' ? <RefreshCw size={15} /> : <X size={15} />}
-          </button>
-        </div>
-      )}
+        </footer>
+      </div>
       {notice && (
         <div className="notice-toast" role="status">
           <Check size={16} />
@@ -594,81 +698,10 @@ export default function App() {
           </button>
         </div>
       )}
-      <div className="workbench">
-        <ChatPanel
-          drawing={drawing}
-          artifacts={artifacts}
-          taskError={taskError}
-          onOpenArtifact={(id) => void openArtifact(id)}
-          archived={Boolean(
-            sessionId && sessions.find((item) => item.id === sessionId)?.engine !== 'freecad',
-          )}
-          sessions={sessions}
-          sessionId={sessionId}
-          onSession={(id) => {
-            setSessionId(id)
-            setBusy(sessions.find((item) => item.id === id)?.status === 'busy')
-            setStopping(false)
-          }}
-          onNewSession={() => {
-            void createSession().catch((cause) => setError(readableError(cause)))
-          }}
-          messages={messages}
-          messagesLoading={messagesLoading}
-          input={input}
-          onInput={setInput}
-          onSend={() => void send()}
-          onStop={() => void stop()}
-          busy={busy}
-          stopping={stopping}
-          connected={connected}
-          historical={historical}
-          onCurrentRevision={() => setRevision(drawing?.current_revision || '')}
-        />
-        <DrawingViewer
-          drawing={drawing}
-          revisions={revisions}
-          revision={revision}
-          onRevision={setRevision}
-          layout={layout}
-          onLayout={setLayout}
-          processing={importing || busy}
-          onUpload={() => fileRef.current?.click()}
-          metadata={selectedMetadata}
-        />
-      </div>
-      <footer className="status-bar">
-        <div>
-          <span className={`service-dot ${health}`} />
-          <span>
-            {health === 'online'
-              ? '服务已连接'
-              : health === 'checking'
-                ? '正在连接服务'
-                : '服务未连接'}
-          </span>
-          <span className="status-divider" />
-          <span>
-            {importing ? '正在导入图纸' : stopping ? '正在停止任务' : busy ? '助手处理中' : '就绪'}
-          </span>
-        </div>
-        <div>
-          {drawing?.current_revision && (
-            <>
-              <span>单位：{info.unit}</span>
-              <span className="status-divider" />
-              <span>{info.layerCount} 图层</span>
-              <span className="status-divider" />
-            </>
-          )}
-          <Shield size={12} />
-          <span>规范审查未运行</span>
-        </div>
-      </footer>
       {dragging && (
         <div className="drop-overlay">
           <FileUp size={38} />
-          <h2>{importing || busy ? '请等待当前任务完成' : '松开鼠标，导入图纸'}</h2>
+          <h2>{locked ? '请等待当前任务完成' : '松开鼠标，加入当前项目'}</h2>
           <p>支持 DWG 和 DXF 文件</p>
         </div>
       )}

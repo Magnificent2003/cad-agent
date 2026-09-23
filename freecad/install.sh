@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Install upstream FreeCAD and its editable MCP checkout without changing CAD business code.
+# Install official FreeCAD and this repository's editable MCP source.
 set -euo pipefail
 component_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$(cd -- "$component_root/.." && pwd)"
 if ! test -f "$component_root/mcp/pyproject.toml"; then
-  git -C "$project_root" submodule update --init -- freecad/mcp
+  echo '项目 MCP 源码缺失，请恢复 freecad/mcp/；安装器不会从上游拉取或覆盖源码。' >&2
+  exit 1
 fi
-bash "$component_root/apply_patches.sh"
 bash "$component_root/install_runtime.sh"
 bash "$component_root/install_python.sh"
 bash "$component_root/install_dxf.sh"

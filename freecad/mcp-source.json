@@ -1,0 +1,15 @@
+{
+  "component": "CAD Agent FreeCAD MCP",
+  "management": "Source tracked directly in the cad-agent repository; no submodule or automatic upstream checkout.",
+  "upstream": {
+    "repository": "https://github.com/neka-nat/freecad-mcp",
+    "commit": "751974609a401660a58a1772ef16f3afbeba9ba1",
+    "version": "0.1.24",
+    "license": "MIT",
+    "license_file": "mcp/LICENSE"
+  },
+  "integrated_changes": [
+    "GUI and asynchronous Python stdout/stderr/traceback diagnostics"
+  ],
+  "note": "Upstream is attribution only. Install dependencies from the checked-in uv.lock and run the local editable source."
+}

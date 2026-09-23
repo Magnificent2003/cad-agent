@@ -56,9 +56,12 @@ def projects(request: Request):
 
 @router.post("/projects", status_code=201)
 def create_project(body: ProjectCreate, request: Request):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(422, "请输入项目名称。")
     project_id = uuid.uuid4().hex
-    request.app.state.store.execute("INSERT INTO projects VALUES (?,?,?)", (project_id, body.name, now()))
-    return {"id": project_id, "name": body.name}
+    request.app.state.store.execute("INSERT INTO projects VALUES (?,?,?)", (project_id, name, now()))
+    return {"id": project_id, "name": name}
 
 
 @router.post("/drawings", status_code=202)

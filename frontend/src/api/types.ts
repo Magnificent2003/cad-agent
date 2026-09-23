@@ -3,6 +3,7 @@ export type Metadata = Record<string, unknown>
 export interface Drawing {
   id: string
   name: string
+  project_id: string
   current_revision: string | null
   metadata?: Metadata | null
   status?: string
@@ -17,6 +18,7 @@ export interface Revision {
 }
 
 export interface Session {
+  drawing_id?: string
   engine?: string
   id: string
   title: string
@@ -68,4 +70,29 @@ export interface Artifact {
 export interface ArtifactList {
   artifacts: Artifact[]
   task: { id: string; status: string; error: string | null } | null
+}
+
+export interface Project {
+  id: string
+  name: string
+}
+
+export interface ProjectVersion {
+  key: string
+  drawing_id: string
+  revision_id: string
+  current_revision: string
+  name: string
+  label: string
+  number: number
+  summary: string
+  created_at: string
+  artifact_id: string | null
+}
+
+export interface Workbench {
+  project: Project
+  versions: ProjectVersion[]
+  sessions: Session[]
+  artifacts: Artifact[]
 }
