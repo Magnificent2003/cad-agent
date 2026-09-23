@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CircleAlert,
   FileSearch,
+  Download,
   History,
   LoaderCircle,
   MessageSquare,
@@ -20,9 +21,13 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { metadataInfo } from '../api/metadata'
 import { readableError, revisionLabel } from '../api/client'
-import type { Drawing, Message, MessagePart, Session } from '../api/types'
+import type { Artifact, Drawing, Message, MessagePart, Session } from '../api/types'
 
 interface Props {
+  artifacts: Artifact[]
+  taskError: string
+  archived: boolean
+  onOpenArtifact: (id: string) => void
   drawing: Drawing | null
   sessions: Session[]
   sessionId: string | null
@@ -42,19 +47,15 @@ interface Props {
 }
 
 const toolNames: Record<string, string> = {
-  summary: '读取图纸概况',
-  inspect: '读取图纸对象',
-  search_text: '检索图纸文字',
-  get_entities: '读取图元',
-  query: '查询图纸',
-  render: '查看图纸预览',
-  preview: '查看图纸预览',
-  edit: '生成修改版本',
-  apply_operations: '执行图纸修改',
-  check: '检查图纸',
-  get_job: '确认处理结果',
-  rag_search: '查询规范依据',
-  export: '导出图纸',
+  execute_code: '执行图纸脚本',
+  get_async_status: '检查执行状态',
+  get_view: '查看图纸',
+  screenshot: '查看图纸',
+  get_objects: '检查图纸对象',
+  get_object: '读取对象属性',
+  get_rpc_status: '检查图纸服务',
+  get_documents: '查看已打开文档',
+  create_document: '创建图纸文档',
 }
 
 function ToolPart({ part }: { part: MessagePart }) {
@@ -73,7 +74,7 @@ function ToolPart({ part }: { part: MessagePart }) {
         )}
         <span>{name}</span>
         <span className="tool-status">
-          {status === 'completed' ? '已完成' : status === 'error' ? '未完成' : '处理中'}
+          {status === 'completed' ? '已返回' : status === 'error' ? '未完成' : '处理中'}
         </span>
         <ChevronRight size={13} />
       </summary>
@@ -91,6 +92,10 @@ function ToolPart({ part }: { part: MessagePart }) {
 export default function ChatPanel(props: Props) {
   const {
     drawing,
+    artifacts,
+    taskError,
+    archived,
+    onOpenArtifact,
     sessions,
     sessionId,
     onSession,
@@ -117,7 +122,7 @@ export default function ChatPanel(props: Props) {
       message.error ||
       message.parts.some((part) => (part.type === 'text' && part.text) || part.type === 'tool'),
   )
-  const disabled = !drawing?.current_revision || historical || busy || messagesLoading
+  const disabled = !drawing?.current_revision || historical || busy || messagesLoading || archived
 
   useEffect(() => {
     if (followRef.current)
@@ -165,6 +170,7 @@ export default function ChatPanel(props: Props) {
                 {sessions.map((session) => (
                   <option key={session.id} value={session.id}>
                     {session.title || '图纸对话'}
+                    {session.engine !== 'freecad' ? '（历史）' : ''}
                   </option>
                 ))}
               </select>
@@ -210,7 +216,7 @@ export default function ChatPanel(props: Props) {
               </div>
               <div>
                 <History size={16} />
-                <span>修改生成新版本，随时回看</span>
+                <span>自主分析、执行修改并生成文件</span>
               </div>
               <div>
                 <ShieldCheck size={16} />
@@ -293,6 +299,46 @@ export default function ChatPanel(props: Props) {
             </div>
           </article>
         ))}
+        {artifacts.length > 0 && (
+          <section className="artifact-list" aria-label="生成的文件">
+            <strong>生成的文件</strong>
+            <p>可打开仅表示文件已导入，工程内容请结合助手的检查结果核对。</p>
+            {artifacts.map((file) => (
+              <div className="artifact-card" key={file.id}>
+                <span className="artifact-name">{file.name}</span>
+                <small>
+                  {Math.ceil(file.bytes / 1024)} KB ·{' '}
+                  {file.preview_status === 'succeeded'
+                    ? '可打开'
+                    : ['queued', 'running'].includes(file.preview_status)
+                      ? '正在生成预览'
+                      : file.preview_status === 'failed'
+                        ? '预览失败，可下载检查'
+                        : '可下载'}
+                </small>
+                <div className="artifact-actions">
+                  <a href={file.download_url} download={file.name}>
+                    <Download size={13} />
+                    下载
+                  </a>
+                  {file.drawing_id && (
+                    <button
+                      disabled={busy || file.preview_status !== 'succeeded'}
+                      onClick={() => onOpenArtifact(file.id)}
+                    >
+                      打开并继续
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
+        {taskError && (
+          <p className="message-error" role="alert">
+            {taskError}
+          </p>
+        )}
         {busy && (
           <div className="working-indicator" role="status">
             <LoaderCircle size={15} className="spin" />
@@ -301,6 +347,12 @@ export default function ChatPanel(props: Props) {
         )}
       </div>
       <div className="composer-area">
+        {archived && (
+          <div className="history-composer">
+            <span>旧会话仅供查看，请新建对话使用自主执行能力。</span>
+            <button onClick={onNewSession}>新建对话</button>
+          </div>
+        )}
         {historical && (
           <div className="history-composer">
             <History size={14} />
@@ -371,7 +423,7 @@ export default function ChatPanel(props: Props) {
         <div className="composer-footnote">
           <span>
             {drawing?.current_revision
-              ? `修改作用于当前版本 ${revisionLabel(drawing.current_revision)}`
+              ? `基于 ${revisionLabel(drawing.current_revision)}，成果另存`
               : '支持 DWG / DXF 格式'}
           </span>
           <span>

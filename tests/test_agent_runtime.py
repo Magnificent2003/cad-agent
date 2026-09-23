@@ -34,16 +34,16 @@ def test_agent_settings_accept_legacy_dotenv_and_prefer_new_names(tmp_path, monk
     assert current.agent_server_password.get_secret_value() == "fake-new-password"
 
 
-def test_project_config_exposes_only_cad_mcp_and_preserves_model_settings():
+def test_project_config_exposes_only_freecad_mcp_and_preserves_model_settings():
     config = launcher.build_config({
         "DEEPSEEK_MODEL": "test-model",
         "DEEPSEEK_BASE_URL": "https://model.example.invalid/v1/",
         "DEEPSEEK_API_KEY": "fake-model-key",
     })
-    assert config["permission"] == {"*": "deny", "cad_*": "allow"}
-    assert list(config["mcp"]) == ["cad"]
-    assert config["mcp"]["cad"]["command"] == [
-        str(runtime.ROOT / ".venv/bin/python"), str(runtime.ROOT / "cad_mcp/launcher.py")
+    assert config["permission"] == {"*": "deny", "freecad_*": "allow"}
+    assert list(config["mcp"]) == ["freecad"]
+    assert config["mcp"]["freecad"]["command"] == [
+        "bash", str(runtime.ROOT / "freecad/mcp.sh")
     ]
     assert config["model"] == config["small_model"] == "deepseek-cad/test-model"
     provider = config["provider"]["deepseek-cad"]
@@ -87,7 +87,7 @@ def test_engine_boundary_maps_credentials_and_isolates_runtime_directories(tmp_p
     result = runtime.engine_environment(original, {"mcp": {"cad": {}}}, runtime=tmp_path)
     assert result["AGENT_SERVER_USERNAME"] == result["OPENCODE_SERVER_USERNAME"] == "legacy-test-user"
     assert result["AGENT_SERVER_PASSWORD"] == result["OPENCODE_SERVER_PASSWORD"] == "fake-new-password"
-    assert result["CAD_INTERNAL_TOKEN"] == "fake-cad-token"
+    assert "CAD_INTERNAL_TOKEN" not in result
     assert result["DEEPSEEK_API_KEY"] == "fake-model-key"
     assert json.loads(result["OPENCODE_CONFIG_CONTENT"]) == {"mcp": {"cad": {}}}
     for flag in ("PROJECT_CONFIG", "CLAUDE_CODE", "DEFAULT_PLUGINS"):
@@ -105,7 +105,7 @@ def test_launcher_source_mode_uses_engine_cwd_and_separate_session_workspace(tmp
     monkeypatch.setattr(launcher, "ROOT", tmp_path)
     state = tmp_path / ".runtime/agent"
     monkeypatch.setattr(launcher, "STATE", state)
-    for relative in (".venv/bin/python", ".tools/bun/bin/bun", "agent/engine/packages/opencode/src/index.ts"):
+    for relative in (".venv/bin/python", ".tools/bun/bin/bun", "agent/engine/packages/opencode/src/index.ts", "freecad/mcp/.venv/bin/freecad-mcp"):
         file = tmp_path / relative
         file.parent.mkdir(parents=True, exist_ok=True)
         file.touch()

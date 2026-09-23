@@ -1,0 +1,3 @@
+# Additional packages for FreeCAD's embedded Python, NOT the backend or MCP venv.
+# Pin direct requirements; install_python.sh resolves and locks missing dependencies.
+ezdxf==1.4.4

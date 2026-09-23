@@ -4,9 +4,8 @@ import hashlib
 import ezdxf
 import pytest
 
-from backend.app.cad import CadError, edit_drawing, import_drawing, query_drawing, render_drawing
-from backend.app.cad.constraints import check_drawing
-from backend.app.cad.reader import snapshots
+from backend.app.cad import CadError, import_drawing, render_drawing
+from backend.app.cad.reader import query_drawing
 
 
 @pytest.fixture
@@ -68,77 +67,12 @@ def test_query_native_entities_layout_attributes_and_pagination(drawing):
     assert bounded["total"] == 2
 
 
-def test_batch_edit_roundtrip_preserves_non_targets(drawing, tmp_path):
-    source, handles = drawing
-    original = snapshots(ezdxf.readfile(source))
-    report = edit_drawing(str(source), str(tmp_path / "r2"), {"operations": [
-        {"type": "set_text", "handles": [handles["text"]], "text": "更新标签"},
-        {"type": "set_text", "handles": [handles["mtext"]], "text": "new\\Pcontent"},
-        {"type": "translate_entities", "handles": [handles["footprint"]], "dx": 5, "dy": 3, "unit": "mm"},
-        {"type": "add_rectangle", "origin": [30, 30], "width": 10, "height": 5, "unit": "mm"},
-        {"type": "add_polyline", "points": [[0, 0], [2, 3]], "unit": "mm"},
-        {"type": "add_text", "position": [30, 40], "height": 2, "text": "新增", "unit": "mm"},
-    ]}, {})
-    result = ezdxf.readfile(tmp_path / "r2/drawing.dxf")
-    assert result.entitydb[handles["text"]].dxf.text == "更新标签"
-    assert result.entitydb[handles["mtext"]].plain_text() == "new\ncontent"
-    assert tuple(result.entitydb[handles["footprint"]].get_points()[0])[:2] == (15, 13)
-    after = snapshots(result)
-    assert report["changes"]["preservation_verified"] is True
-    assert len(report["changes"]["added_handles"]) == 3
-    for key in ("site", "line", "locked", "insert", "block_line"):
-        assert after[handles[key]] == original[handles[key]]
-    assert snapshots(ezdxf.readfile(source)) == original
 
 
-@pytest.mark.parametrize("operation,code", [
-    ({"type": "translate_entities", "handles": ["line"], "dx": 1, "unit": "m"}, "unit_mismatch"),
-    ({"type": "translate_entities", "handles": ["line"], "dx": float("nan"), "unit": "mm"}, "invalid_operation"),
-    ({"type": "set_text", "handles": ["line"], "text": "wrong"}, "invalid_targets"),
-    ({"type": "set_text", "handles": ["mtext"], "text": "new", "preserve_mtext_format": True}, "unsupported_format_preservation"),
-    ({"type": "translate_entities", "handles": ["locked"], "dx": 1, "unit": "mm"}, "locked_layer"),
-    ({"type": "translate_entities", "handles": ["block_line"], "dx": 1, "unit": "mm"}, "invalid_targets"),
-])
-def test_invalid_edits_leave_original_intact(drawing, tmp_path, operation, code):
-    source, handles = drawing
-    operation["handles"] = [handles[name] for name in operation["handles"]]
-    before = source.read_bytes()
-    with pytest.raises(CadError) as error:
-        edit_drawing(str(source), str(tmp_path / "rejected"), operation, {})
-    assert error.value.code == code
-    assert source.read_bytes() == before
-    assert not (tmp_path / "rejected" / "drawing.dxf").exists()
 
 
-def test_unknown_units_require_explicit_confirmation(drawing, tmp_path):
-    source, handles = drawing
-    doc = ezdxf.readfile(source)
-    doc.units = 0
-    doc.saveas(source)
-    operation = {"type": "translate_entities", "handles": [handles["line"]], "dx": 1, "unit": "mm"}
-    with pytest.raises(CadError, match="unspecified"):
-        edit_drawing(str(source), str(tmp_path / "failed"), operation, {})
-    report = edit_drawing(str(source), str(tmp_path / "confirmed"), {"operations": [operation], "confirmed_unit": "mm"}, {})
-    assert report["units"]["code"] == 4
-    assert ezdxf.readfile(source).units == 0
 
 
-def test_geometry_pass_fail_unknown_and_applicability(drawing):
-    source, handles = drawing
-    constraints = [
-        {"constraint_id": "inside", "targets": [handles["footprint"]], "predicate": "within_site", "parameters": {"site_handle": handles["site"]}, "unit": "mm", "source_kind": "demo_rule"},
-        {"constraint_id": "overlap", "targets": [handles["footprint"], handles["site"]], "predicate": "no_overlap", "unit": "mm"},
-        {"constraint_id": "missing-unit", "targets": [handles["footprint"]], "predicate": "within_site"},
-        {"constraint_id": "not-applicable", "targets": [], "predicate": "no_overlap", "applies_if": False},
-        {"constraint_id": "distance", "targets": [handles["line"], handles["footprint"]], "predicate": "min_distance", "parameters": {"minimum": 5}, "unit": "mm"},
-        {"constraint_id": "no-threshold", "targets": [handles["line"], handles["footprint"]], "predicate": "min_distance", "unit": "mm"},
-        {"constraint_id": "missing-width", "targets": [handles["line"]], "predicate": "within_site", "parameters": {"site_handle": handles["site"]}, "unit": "mm"},
-    ]
-    result = check_drawing(str(source), constraints, "r1")
-    assert [check["status"] for check in result["checks"]] == ["pass", "fail", "unknown", "not_applicable", "pass", "unknown", "unknown"]
-    assert result["checks"][1]["measured_value"]["maximum_overlap_area"] == 100
-    assert result["rag_status"] == "not_configured"
-    assert result["regulatory_review"] == "not_run"
 
 
 def test_dwg_missing_converter_is_actionable(tmp_path, monkeypatch):
@@ -164,38 +98,10 @@ def test_converter_timeout_kills_task_and_preserves_input(tmp_path):
     assert not target.exists()
 
 
-def test_non_target_mutation_is_rejected(drawing, tmp_path, monkeypatch):
-    from ezdxf.entities import Line
-    source, handles = drawing
-    original_translate = Line.translate
-    def faulty_translate(entity, *delta):
-        result = original_translate(entity, *delta)
-        entity.doc.entitydb[handles["site"]].dxf.layer = "0"
-        return result
-    monkeypatch.setattr(Line, "translate", faulty_translate)
-    with pytest.raises(CadError) as error:
-        edit_drawing(str(source), str(tmp_path / "bad"), {"type": "translate_entities", "handles": [handles["line"]], "dx": 1, "unit": "mm"}, {})
-    assert error.value.code == "preservation_failed"
-    assert ezdxf.readfile(source).entitydb[handles["site"]].dxf.layer == "SITE"
 
 
-def test_move_insert_preserves_definition_and_moves_attributes(drawing, tmp_path):
-    source, handles = drawing
-    original = ezdxf.readfile(source)
-    result = edit_drawing(str(source), str(tmp_path / "insert-moved"), {"type": "translate_entities", "handles": [handles["insert"]], "dx": 5, "dy": 6, "unit": "mm"}, {})
-    changed = ezdxf.readfile(tmp_path / "insert-moved/drawing.dxf")
-    reference = changed.entitydb[handles["insert"]]
-    assert tuple(reference.dxf.insert) == (75, 76, 0)
-    assert tuple(reference.attribs[0].dxf.insert) == (75, 76, 0)
-    assert snapshots(original)[handles["block_line"]] == snapshots(changed)[handles["block_line"]]
-    assert result["changes"]["preservation_verified"]
 
 
-def test_coordinate_overflow_is_rejected(drawing, tmp_path):
-    source, _ = drawing
-    with pytest.raises(CadError) as error:
-        edit_drawing(str(source), str(tmp_path / "overflow"), {"type": "add_rectangle", "origin": [1e308, 0], "width": 1e308, "height": 1, "unit": "mm"}, {})
-    assert error.value.code == "invalid_operation"
 
 
 def test_worker_termination_reaps_converter_process_group(tmp_path):

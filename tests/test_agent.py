@@ -3,13 +3,11 @@
 import asyncio
 import base64
 import json
-from io import BytesIO
 
 import httpx
 import pytest
 
 from agent.client import AgentClient, AgentError, event_session_id
-from cad_mcp.client import CADAPI
 
 
 async def test_auth_applies_to_prompt_history_abort_and_sse():
@@ -120,73 +118,3 @@ async def test_disconnecting_sse_closes_transport():
         assert (await anext(events))["type"] == "server.connected"
         await events.aclose()
     assert stream.closed
-
-
-async def test_mcp_png_keeps_crop_url_and_returns_image_bytes(monkeypatch):
-    from PIL import Image
-
-    buffer = BytesIO()
-    Image.new("RGB", (16, 16), "red").save(buffer, format="PNG")
-    png = buffer.getvalue()
-    monkeypatch.setenv("CAD_INTERNAL_TOKEN", "local-test-token")
-
-    def upstream(request):
-        assert request.url.params["render_id"] == "cropped-region"
-        assert request.headers["authorization"] == "Bearer local-test-token"
-        return httpx.Response(200, content=png, headers={"Content-Type": "image/png"})
-
-    async with CADAPI(transport=httpx.MockTransport(upstream)) as api:
-        content = await api.png("/internal/preview?format=png&render_id=cropped-region", {"revision_id": "r0002"})
-    assert content[0].type == "text"
-    assert content[1].type == "image"
-    assert content[1].mime_type == "image/png"
-    assert base64.b64decode(content[1].data) == png
-
-
-async def test_mcp_immediate_dxf_export_needs_no_job_id(monkeypatch):
-    monkeypatch.setenv("CAD_INTERNAL_TOKEN", "local-test-token")
-
-    def unexpected_request(request):
-        raise AssertionError("A completed export must not trigger job polling")
-
-    result = {"status": "succeeded", "result": {"download_url": "/api/drawing.dxf"}}
-    async with CADAPI(transport=httpx.MockTransport(unexpected_request)) as api:
-        assert await api.wait_job(result) == result
-
-
-@pytest.mark.parametrize(
-    "name,arguments",
-    [
-        ("query_entities", {}),
-        ("read_entities", {"entity_ids": ["e1"]}),
-        ("render_region", {"bbox": [0, 0, 10, 10]}),
-        ("check_geometry", {"constraints": []}),
-        ("export", {"format": "dwg"}),
-    ],
-)
-async def test_mcp_queued_tools_bind_trusted_session(monkeypatch, name, arguments):
-    from cad_mcp import server
-
-    requests = []
-
-    class API:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            pass
-
-        async def request(self, method, path, **kwargs):
-            requests.append(kwargs["json"])
-            return {"id": "job", "status": "succeeded", "result": {"preview_url": "/internal/preview?render_id=crop"}}
-
-        async def wait_job(self, job):
-            return job
-
-        async def png(self, *args, **kwargs):
-            return []
-
-    monkeypatch.setattr(server, "CADAPI", API)
-    await getattr(server, name)(drawing_id="drawing", revision_id="r0001", session_id="trusted-session", **arguments)
-    assert len(requests) == 1
-    assert requests[0]["session_id"] == "trusted-session"

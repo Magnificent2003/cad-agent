@@ -1686,3 +1686,53 @@ select {
     transition: none !important;
   }
 }
+
+.artifact-list {
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid #dce4e1;
+  border-radius: 12px;
+}
+.artifact-list > p {
+  color: #65736d;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.artifact-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 0;
+  border-top: 1px solid #e7ece9;
+}
+.artifact-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.artifact-card small {
+  color: #65736d;
+}
+.artifact-actions {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.artifact-actions a,
+.artifact-actions button {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  color: #27684e;
+  font-size: 13px;
+}
+.artifact-actions button {
+  padding: 5px 9px;
+  border: 1px solid #cddfd5;
+  border-radius: 5px;
+  background: white;
+  cursor: pointer;
+}
+.artifact-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

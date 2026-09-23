@@ -1,4 +1,4 @@
-import type { Drawing, Job, Message, Revision, Session } from './types'
+import type { ArtifactList, Drawing, Job, Message, Revision, Session } from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -29,6 +29,11 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
 
 const enc = encodeURIComponent
 export const api = {
+  artifacts: (session: string) => request<ArtifactList>(`/sessions/${enc(session)}/artifacts`),
+  openArtifact: (id: string) =>
+    request<{ drawing_id: string; session_id: string }>(`/artifacts/${enc(id)}/open`, {
+      method: 'POST',
+    }),
   health: () => request<Record<string, unknown>>('/health'),
   drawings: () => request<Drawing[]>('/drawings'),
   drawing: (id: string) => request<Drawing>(`/drawings/${enc(id)}`),

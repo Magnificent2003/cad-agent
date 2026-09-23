@@ -5,7 +5,8 @@ import ezdxf
 from fontTools import subset
 from fontTools.ttLib import TTFont
 
-from backend.app.cad import query_drawing, render_drawing
+from backend.app.cad import render_drawing
+from backend.app.cad.reader import query_drawing
 from backend.app.cad.text_compat import FontResolver, decode_text
 from backend.app.preview_cache import FONT_ROOT
 

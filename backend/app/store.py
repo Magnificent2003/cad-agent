@@ -18,7 +18,7 @@ def decode(row):
     if row is None:
         return None
     result = dict(row)
-    for key in ("metadata", "payload", "result"):
+    for key in ("metadata", "payload", "result", "inputs"):
         if key in result:
             result[key] = json.loads(result[key]) if result[key] else None
     return result
@@ -64,6 +64,23 @@ class Store:
                     updated_at TEXT NOT NULL, operation_id TEXT,
                     UNIQUE(drawing_id, operation_id));
             """)
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS agent_tasks (
+                    id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
+                    drawing_id TEXT NOT NULL REFERENCES drawings(id), source_revision TEXT NOT NULL,
+                    status TEXT NOT NULL, inputs TEXT NOT NULL DEFAULT '[]', error TEXT,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS artifacts (
+                    id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES agent_tasks(id),
+                    session_id TEXT NOT NULL REFERENCES sessions(id), name TEXT NOT NULL,
+                    path TEXT NOT NULL, sha256 TEXT NOT NULL, bytes INTEGER NOT NULL,
+                    drawing_id TEXT REFERENCES drawings(id), job_id TEXT REFERENCES jobs(id),
+                    created_at TEXT NOT NULL, UNIQUE(task_id, name));
+            """)
+            if "engine" not in {row[1] for row in db.execute("PRAGMA table_info(sessions)")}:
+                db.execute("ALTER TABLE sessions ADD COLUMN engine TEXT NOT NULL DEFAULT 'legacy'")
+            db.execute("UPDATE agent_tasks SET status='interrupted',error=?,updated_at=? WHERE status IN ('preparing','running','collecting','stopping')",
+                       ("服务重启，本轮已中断；未完成成果不会自动发布。", now()))
             db.execute("INSERT OR IGNORE INTO projects VALUES (?, ?, ?)", ("default", "CAD 图纸工作台", now()))
             if "busy_since" not in {row[1] for row in db.execute("PRAGMA table_info(sessions)")}:
                 db.execute("ALTER TABLE sessions ADD COLUMN busy_since REAL NOT NULL DEFAULT 0")

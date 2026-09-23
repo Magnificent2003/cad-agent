@@ -1,5 +1,6 @@
-"""Own the three development processes and shut them down together."""
+"""Start and stop FreeCAD, the backend, the agent and the web UI together."""
 import argparse
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import signal
@@ -8,67 +9,186 @@ import subprocess
 import sys
 import time
 from urllib.parse import urlsplit
+import xmlrpc.client
 
 from dotenv import dotenv_values
+
+from scripts.ports import check_port, port_diagnostics
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@dataclass
+class Service:
+    name: str
+    command: list[str]
+    port: int
+    log: Path | None = None
+    host: str = "127.0.0.1"
+
+
+def port_open(port, host="127.0.0.1"):
+    try:
+        with socket.create_connection((host, port), timeout=0.3):
+            return True
+    except OSError:
+        return False
+
+
+class RPCTransport(xmlrpc.client.Transport):
+    def make_connection(self, host):
+        connection = super().make_connection(host)
+        connection.timeout = 2
+        return connection
+
+
+def freecad_ready():
+    try:
+        with xmlrpc.client.ServerProxy("http://127.0.0.1:9875", transport=RPCTransport()) as rpc:
+            return rpc.ping() is True
+    except (OSError, xmlrpc.client.Error):
+        return False
+
+
+def check_processes(processes):
+    for service, process in processes:
+        if process.poll() is not None:
+            detail = f"；日志：{service.log}" if service.log else "；请查看上方日志"
+            # Capture state before cleanup removes the other services. Engine
+            # releases may report only 'ServeError', hiding the OS bind error.
+            status = port_diagnostics(service.port)
+            try:
+                check_port(service.host, service.port, service.name)
+            except RuntimeError as exc:
+                status = str(exc)
+            raise RuntimeError(f"{service.name} 已退出（{process.returncode}）{detail}\n退出时端口状态：\n{status}")
+
+
+def wait_ready(service, processes, timeout=90):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        check_processes(processes)
+        ready = freecad_ready() if service.name == "FreeCAD" else port_open(service.port, service.host)
+        if ready:
+            print(f"  已启动 {service.name}：127.0.0.1:{service.port}", flush=True)
+            return
+        time.sleep(0.5)
+    detail = f"；日志：{service.log}" if service.log else ""
+    raise RuntimeError(f"等待 {service.name} 启动超时{detail}")
+
+
+def signal_group(process, sig):
+    try:
+        os.killpg(process.pid, sig)
+    except ProcessLookupError:
+        pass
+
+
+def run_services(services, env, on_ready):
+    processes = []
+    try:
+        for service in services:
+            child_env = dict(env)
+            if service.name in {"网页", "FreeCAD"}:
+                for key in tuple(child_env):
+                    if key.startswith("DEEPSEEK_") or key in {"CAD_INTERNAL_TOKEN", "AGENT_SERVER_PASSWORD", "OPENCODE_SERVER_PASSWORD"}:
+                        child_env.pop(key)
+            log = None
+            try:
+                if service.log:
+                    service.log.parent.mkdir(parents=True, exist_ok=True)
+                    log = service.log.open("a", encoding="utf-8")
+                    log.write(f"\n--- 启动 {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+                    log.flush()
+                process = subprocess.Popen(service.command, cwd=ROOT, env=child_env, start_new_session=True,
+                                           stdout=log, stderr=subprocess.STDOUT if log else None)
+                processes.append((service, process))
+            finally:
+                if log:
+                    log.close()
+            # FreeCAD's RPC must be ready before the agent starts.
+            wait_ready(service, processes)
+        on_ready()
+        while True:
+            check_processes(processes)
+            time.sleep(0.5)
+    finally:
+        print("正在停止本次启动的全部服务……", flush=True)
+        # Signal owned groups even if a leader exited: MCP children may remain.
+        for _, process in reversed(processes):
+            signal_group(process, signal.SIGTERM)
+        deadline = time.monotonic() + 8
+        for _, process in reversed(processes):
+            try:
+                process.wait(timeout=max(0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                pass
+        for _, process in reversed(processes):
+            signal_group(process, signal.SIGKILL)
+            process.wait()
+
+
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--production", action="store_true", help="serve frontend/dist at :8000 instead of starting Vite")
-    parser.add_argument("--without-agent", action="store_true", help="start CAD file/preview service without a model connection")
+    parser = argparse.ArgumentParser(description="统一启动 FreeCAD、后端、智能体和网页")
+    parser.add_argument("--production", action="store_true", help="由后端提供已构建网页，不启动 Vite")
+    parser.add_argument("--freecad", action="store_true", help=argparse.SUPPRESS)  # compatibility: now always enabled
     args = parser.parse_args()
     config = {**dotenv_values(ROOT / ".env"), **os.environ}
     api = urlsplit(config.get("CAD_API_BASE_URL") or "http://127.0.0.1:8000")
     agent = urlsplit(config.get("AGENT_BASE_URL") or config.get("OPENCODE_BASE_URL") or "http://127.0.0.1:4096")
-    if api.hostname not in {"127.0.0.1", "localhost", "::1"}:
-        raise SystemExit("首期服务只允许本机绑定。")
-    ports = [api.port or 8000] + ([] if args.without_agent else [agent.port or 4096]) + ([] if args.production else [5173])
-    for port in ports:
-        with socket.socket() as probe:
-            if probe.connect_ex(("127.0.0.1", port)) == 0:
-                raise SystemExit(f"端口 {port} 已有服务运行，请使用已有服务或先停止该进程。")
+    if api.hostname not in {"127.0.0.1", "localhost", "::1"} or agent.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise SystemExit("服务只允许本机绑定。")
     if args.production and not (ROOT / "frontend/dist/index.html").is_file():
         raise SystemExit("请先执行 npm run build --prefix frontend。")
+    if not (ROOT / "freecad/runtime/squashfs-root/AppRun").is_file():
+        raise SystemExit("请先运行 bash freecad/install.sh。FreeCAD 是必需组件，没有旧智能体备用入口。")
     env = dict(os.environ)
     env["PATH"] = str(ROOT / ".tools/node/bin") + os.pathsep + env.get("PATH", "")
-    # Model credentials are loaded only by the Python server/agent launcher.
     python = str(ROOT / ".venv/bin/python")
-    commands = [[python, "-m", "uvicorn", "backend.app.main:app", "--host", api.hostname or "127.0.0.1", "--port", str(api.port or 8000), "--workers", "1"]]
-    if not args.without_agent:
-        commands.append([python, "-m", "agent.launcher"])
+    services = [
+        Service("FreeCAD", ["bash", "freecad/start.sh"], 9875, ROOT / ".runtime/freecad/gui.log"),
+        Service("业务后端", [python, "-m", "uvicorn", "backend.app.main:app", "--host", api.hostname,
+                           "--port", str(api.port or 8000), "--workers", "1"], api.port or 8000, host=api.hostname),
+        Service("FreeCAD 智能体", [python, "-m", "agent.launcher"], agent.port or 4096,
+                ROOT / ".runtime/agent/server.log", host=agent.hostname or "127.0.0.1"),
+    ]
     if not args.production:
-        commands.append([str(ROOT / ".tools/node/bin/npm"), "run", "dev", "--prefix", "frontend"])
-    processes = []
+        services.append(Service("网页", [str(ROOT / ".tools/node/bin/npm"), "run", "dev", "--prefix", "frontend"], 5173))
+    if len({service.port for service in services}) != len(services):
+        raise SystemExit("配置中有重复端口，请检查 .env。")
+
     def stop(*_):
         raise KeyboardInterrupt
+
     signal.signal(signal.SIGTERM, stop)
+
+    def on_ready():
+        print(f"\n全部服务已启动。打开 http://127.0.0.1:{(api.port or 8000) if args.production else 5173}；Ctrl+C 一起停止。", flush=True)
+        print("网页已使用 FreeCAD 自主执行智能体；无需另开实验服务。\n"
+              "日志：.runtime/agent/server.log、.runtime/freecad/gui.log", flush=True)
+
     try:
-        for command in commands:
-            child_env = dict(env)
-            if "frontend" in command:
-                for key in tuple(child_env):
-                    if key.startswith("DEEPSEEK_") or key in {"CAD_INTERNAL_TOKEN", "AGENT_SERVER_PASSWORD", "OPENCODE_SERVER_PASSWORD"}:
-                        child_env.pop(key)
-            processes.append(subprocess.Popen(command, cwd=ROOT, env=child_env, start_new_session=True))
-        print(f"打开 http://127.0.0.1:{api.port or 8000 if args.production else 5173}；Ctrl+C 停止全部服务。", flush=True)
-        while all(process.poll() is None for process in processes):
-            time.sleep(0.5)
-        print("一个服务已退出，正在停止其余服务。", file=sys.stderr)
+        for service in services:
+            check_port(service.host, service.port, service.name)
+        subprocess.run(["bash", "freecad/install_python.sh", "--check"], cwd=ROOT, env=env, check=True)
+        subprocess.run([python, "-m", "agent.launcher", "--check"], cwd=ROOT, env=env, check=True)
+        run_services(services, env, on_ready)
     except KeyboardInterrupt:
         pass
-    finally:
-        for process in processes:
-            if process.poll() is None:
-                os.killpg(process.pid, signal.SIGTERM)
-        for process in processes:
-            try:
-                process.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
+    except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
+        message = f"启动失败或服务异常：{exc}"
+        print(message, file=sys.stderr)
+        diagnostic = ROOT / ".runtime/startup-errors.log"
+        try:
+            diagnostic.parent.mkdir(parents=True, exist_ok=True)
+            with diagnostic.open("a", encoding="utf-8") as log:
+                log.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n{message}\n")
+            print(f"启动诊断已保存：{diagnostic}", file=sys.stderr)
+        except OSError:
+            print("无法写入启动诊断文件，请保留以上终端输出。", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

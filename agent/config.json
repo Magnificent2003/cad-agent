@@ -6,7 +6,9 @@
   "autoupdate": false,
   "share": "disabled",
   "snapshot": false,
-  "enabled_providers": ["deepseek-cad"],
+  "enabled_providers": [
+    "deepseek-cad"
+  ],
   "agent": {
     "cad": {
       "description": "CAD 图纸助手",
@@ -28,24 +30,39 @@
           "attachment": true,
           "tool_call": true,
           "reasoning": true,
-          "modalities": {"input": ["text", "image"], "output": ["text"]},
-          "interleaved": {"field": "reasoning_content"},
-          "limit": {"context": 131072, "output": 8192}
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "interleaved": {
+            "field": "reasoning_content"
+          },
+          "limit": {
+            "context": 131072,
+            "output": 8192
+          }
         }
       }
     }
   },
   "mcp": {
-    "cad": {
+    "freecad": {
       "type": "local",
-      "command": [".venv/bin/python", "-m", "cad_mcp.launcher"],
+      "command": [
+        "bash",
+        "freecad/mcp.sh"
+      ],
       "enabled": true,
-      "timeout": 300000,
-      "environment": {
-        "CAD_API_BASE_URL": "{env:CAD_API_BASE_URL}",
-        "CAD_INTERNAL_TOKEN": "{env:CAD_INTERNAL_TOKEN}"
-      }
+      "timeout": 300000
     }
   },
-  "permission": {"*": "deny", "cad_*": "allow"}
+  "permission": {
+    "*": "deny",
+    "freecad_*": "allow"
+  }
 }

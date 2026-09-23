@@ -31,6 +31,7 @@ async function fixture(page: Page, options: { empty?: boolean; svgFails?: boolea
   const requests: string[] = []
   let messages: object[] = []
   let eventsRequested = false
+  let running = false
   let submitted: Record<string, unknown> | null = null
   let imported = !options.empty
   let importReady = !options.empty
@@ -64,10 +65,11 @@ async function fixture(page: Page, options: { empty?: boolean; svgFails?: boolea
     if (url.pathname.endsWith('/sessions'))
       return respond(
         request.method() === 'POST'
-          ? { id: 'session-test', title: '验收对话', status: 'idle' }
+          ? { id: 'session-test', title: '验收对话', status: 'idle', engine: 'freecad' }
           : [],
       )
-    if (url.pathname.endsWith('/status')) return respond({ status: 'idle' })
+    if (url.pathname.endsWith('/artifacts')) return respond({ artifacts: [], task: null })
+    if (url.pathname.endsWith('/status')) return respond({ status: running ? 'busy' : 'idle' })
     if (url.pathname.endsWith('/events')) {
       eventsRequested = true
       return route.fulfill({
@@ -79,6 +81,7 @@ async function fixture(page: Page, options: { empty?: boolean; svgFails?: boolea
       if (request.method() === 'POST') {
         expect(eventsRequested).toBe(true)
         submitted = request.postDataJSON()
+        running = true
         messages = [
           { id: 'user-message', role: 'user', parts: [{ type: 'text', text: submitted!.text }] },
         ]
@@ -86,8 +89,10 @@ async function fixture(page: Page, options: { empty?: boolean; svgFails?: boolea
       }
       return respond(messages)
     }
-    if (url.pathname.endsWith('/abort'))
+    if (url.pathname.endsWith('/abort')) {
+      running = false
       return respond({ status: 'stopped', model_stopped: true, jobs: [] })
+    }
     if (url.pathname === `/api/drawings/${drawing.id}`)
       return respond(
         importReady
@@ -196,4 +201,63 @@ test('upload follows import job completion and the workbench fits a mobile scree
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   )
+})
+
+test('generated files download and open in the same conversation', async ({ page }) => {
+  await fixture(page)
+  const conversation = {
+    id: 'session-test',
+    title: '自主文件任务',
+    status: 'idle',
+    engine: 'freecad',
+  }
+  await page.route('**/api/drawings/*/sessions', (route) => route.fulfill({ json: [conversation] }))
+  await page.route('**/api/sessions/session-test/artifacts', (route) =>
+    route.fulfill({
+      json: {
+        artifacts: [
+          {
+            id: 'file-test',
+            name: '成果.dxf',
+            bytes: 1234,
+            task_id: 'task-test',
+            drawing_id: 'result-drawing',
+            preview_status: 'succeeded',
+            preview_error: null,
+            download_url: '/api/artifacts/file-test/download',
+          },
+        ],
+        task: { id: 'task-test', status: 'completed', error: null },
+      },
+    }),
+  )
+  await page.route('**/api/artifacts/file-test/open', (route) =>
+    route.fulfill({ json: { drawing_id: 'result-drawing', session_id: 'session-test' } }),
+  )
+  await page.route('**/api/drawings/result-drawing', (route) =>
+    route.fulfill({ json: { ...drawing, id: 'result-drawing', name: '成果.dxf' } }),
+  )
+  await page.goto('/')
+  const files = page.getByRole('region', { name: '生成的文件' })
+  await expect(files.getByText('成果.dxf')).toBeVisible()
+  const downloaded = page.waitForEvent('download')
+  await files.getByRole('link', { name: '下载' }).click()
+  expect((await downloaded).suggestedFilename()).toBe('成果.dxf')
+  await files.getByRole('button', { name: '打开并继续' }).click()
+  await expect(page.getByLabel('选择图纸')).toHaveValue('result-drawing')
+  await expect(page.getByLabel('历史对话')).toHaveValue('session-test')
+  await expect(page.getByLabel('向 CAD 助手发送消息')).toBeEnabled()
+})
+
+test('legacy conversations cannot submit to the removed chain', async ({ page }) => {
+  await fixture(page)
+  await page.route('**/api/drawings/*/sessions', (route) =>
+    route.fulfill({
+      json: [{ id: 'legacy-session', title: '旧对话', status: 'idle', engine: 'legacy' }],
+    }),
+  )
+  await page.goto('/')
+  await page.getByLabel('历史对话').selectOption('legacy-session')
+  await expect(page.getByLabel('向 CAD 助手发送消息')).toBeDisabled()
+  await expect(page.getByText('旧会话仅供查看，请新建对话使用自主执行能力。')).toBeVisible()
 })

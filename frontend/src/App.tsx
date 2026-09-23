@@ -17,7 +17,7 @@ import DrawingViewer from './components/DrawingViewer'
 import { api, readableError, revisionLabel } from './api/client'
 import { metadataInfo } from './api/metadata'
 import { useSessionEvents } from './api/useSessionEvents'
-import type { Drawing, Message, Revision, Session, SessionEvent } from './api/types'
+import type { Artifact, Drawing, Message, Revision, Session, SessionEvent } from './api/types'
 
 const delay = (milliseconds: number) =>
   new Promise((resolve) => window.setTimeout(resolve, milliseconds))
@@ -32,6 +32,8 @@ export default function App() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
+  const [artifacts, setArtifacts] = useState<Artifact[]>([])
+  const [taskError, setTaskError] = useState('')
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -130,8 +132,9 @@ export default function App() {
       .then((items) => {
         if (cancelled) return
         setSessions(items)
-        setSessionId(items[0]?.id || null)
-        setBusy(items[0]?.status === 'busy')
+        const current = items.find((item) => item.engine === 'freecad')
+        setSessionId(current?.id || null)
+        setBusy(current?.status === 'busy')
       })
       .catch((cause) => {
         if (!cancelled) setError(readableError(cause))
@@ -156,6 +159,46 @@ export default function App() {
         if (activeSession.current === sessionId) setMessagesLoading(false)
       })
   }, [sessionId, refreshMessages])
+
+  useEffect(() => {
+    setArtifacts([])
+    setTaskError('')
+    if (!sessionId) return
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const [files, status] = await Promise.all([
+          api.artifacts(sessionId),
+          api.sessionStatus(sessionId),
+        ])
+        if (cancelled || activeSession.current !== sessionId) return
+        setArtifacts(files.artifacts)
+        setTaskError(files.task?.error || '')
+        if (!sendLock.current && !stopLock.current) {
+          setBusy(status.status === 'busy')
+          if (status.status !== 'busy') setStopping(false)
+        }
+      } catch {
+        /* Connection status and normal requests report service failures. */
+      }
+    }
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 2000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [sessionId])
+
+  const openArtifact = async (id: string) => {
+    try {
+      const result = await api.openArtifact(id)
+      setDrawingId(result.drawing_id)
+      setNotice('已切换到成果图纸，继续对话将使用这份文件。')
+    } catch (cause) {
+      setError(readableError(cause))
+    }
+  }
 
   const onEvent = useCallback(
     (event: SessionEvent) => {
@@ -327,22 +370,12 @@ export default function App() {
     setStopping(true)
     try {
       const result = await api.abort(sessionId)
-      for (const originalJob of result.jobs || []) {
-        let job = originalJob
-        while (['queued', 'running', 'cancelling'].includes(job.status)) {
-          await delay(1000)
-          job = await api.job(job.id)
-        }
-      }
       await refreshMessages(sessionId)
-      setStopping(false)
-      if (result.model_stopped) {
-        setBusy(false)
-        setNotice('任务已停止。')
-      } else {
-        setBusy(true)
-        setError('图纸写入已停止，模型停止尚未确认。请稍后再次点击停止。')
-      }
+      setStopping(!result.model_stopped)
+      setBusy(!result.model_stopped)
+      setNotice(
+        result.model_stopped ? '任务已停止。' : '已请求停止，正在等待 FreeCAD 中已开始的操作结束。',
+      )
     } catch (cause) {
       setError(readableError(cause))
       setStopping(false)
@@ -564,6 +597,12 @@ export default function App() {
       <div className="workbench">
         <ChatPanel
           drawing={drawing}
+          artifacts={artifacts}
+          taskError={taskError}
+          onOpenArtifact={(id) => void openArtifact(id)}
+          archived={Boolean(
+            sessionId && sessions.find((item) => item.id === sessionId)?.engine !== 'freecad',
+          )}
           sessions={sessions}
           sessionId={sessionId}
           onSession={(id) => {

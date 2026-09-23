@@ -22,7 +22,7 @@ def build_config(env: dict[str, str]) -> dict:
     provider["models"] = {model: definition}
     provider["options"]["baseURL"] = env.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
     config["agent"]["cad"]["prompt"] = (COMPONENT / "prompts/cad.txt").read_text(encoding="utf-8")
-    config["mcp"]["cad"]["command"] = [str(ROOT / ".venv/bin/python"), str(ROOT / "cad_mcp/launcher.py")]
+    config["mcp"]["freecad"]["command"] = ["bash", str(ROOT / "freecad/mcp.sh")]
     return config
 
 
@@ -32,7 +32,7 @@ def main() -> None:
     args = parser.parse_args()
     load_dotenv(ROOT / ".env", override=False)
     env = normalize_environment(dict(os.environ))
-    required = [name for name in ("DEEPSEEK_API_KEY", "CAD_INTERNAL_TOKEN", "AGENT_SERVER_PASSWORD") if not env.get(name)]
+    required = [name for name in ("DEEPSEEK_API_KEY", "AGENT_SERVER_PASSWORD") if not env.get(name)]
     if required:
         raise SystemExit("缺少环境变量：" + ", ".join(required))
     env.setdefault("CAD_API_BASE_URL", "http://127.0.0.1:8000")
@@ -45,9 +45,11 @@ def main() -> None:
         raise SystemExit(str(exc)) from None
     if not (ROOT / ".venv/bin/python").is_file():
         raise SystemExit("缺少 .venv，请先运行 uv sync --frozen")
+    if not (ROOT / "freecad/mcp/.venv/bin/freecad-mcp").is_file():
+        raise SystemExit("请先运行 bash freecad/install.sh 安装 FreeCAD MCP")
     config = build_config(env)
     if args.check:
-        print("智能体配置有效；运行方式=" + env.get("AGENT_RUNTIME", "release") + "；模型=" + config["model"] + "；CAD MCP 已配置")
+        print("智能体配置有效；运行方式=" + env.get("AGENT_RUNTIME", "release") + "；模型=" + config["model"] + "；仅启用原版 FreeCAD MCP")
         return
     env = engine_environment(env, config)
     workspace = STATE / "workspace"

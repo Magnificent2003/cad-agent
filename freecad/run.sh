@@ -10,6 +10,8 @@ if ! test -x "$application"; then
   exit 1
 fi
 
+bash "$component_root/install_python.sh" --check --quiet
+
 state_root="$project_root/.runtime/freecad"
 mkdir -p -- "$state_root"
 state_root="$(cd -- "$state_root" && pwd)"
@@ -26,14 +28,15 @@ if test -n "${DISPLAY:-}"; then
   export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
 fi
 export PYTHONNOUSERSITE=1
-application_args=("$@")
+# Both GUI and headless FreeCAD use the same extra Python packages.
+# -P works with FreeCAD's isolated Python; PYTHONPATH does not.
+python_paths=(-P "$component_root/runtime/python-deps")
 if test -d "$component_root/runtime/dxf-library"; then
-  # FreeCAD uses an isolated Python configuration and ignores PYTHONPATH.
-  # Its documented -P option adds an external library without editing FreeCAD.
-  if test "${1:-}" = freecadcmd; then
-    application_args=(freecadcmd -P "$component_root/runtime/dxf-library" "${@:2}")
-  else
-    application_args=(-P "$component_root/runtime/dxf-library" "$@")
-  fi
+  python_paths+=(-P "$component_root/runtime/dxf-library")
+fi
+if test "${1:-}" = freecadcmd; then
+  application_args=(freecadcmd "${python_paths[@]}" "${@:2}")
+else
+  application_args=("${python_paths[@]}" "$@")
 fi
 exec "$application" "${application_args[@]}"

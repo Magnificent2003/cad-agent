@@ -22,7 +22,7 @@ def main():
     for key, value in dotenv_values(template).items():
         if key not in current:
             set_key(target, key, value or "")
-    for key in ("CAD_INTERNAL_TOKEN", "AGENT_SERVER_PASSWORD"):
+    for key in ("AGENT_SERVER_PASSWORD",):
         if not current.get(key):
             set_key(target, key, secrets.token_urlsafe(32))
     target.chmod(0o600)

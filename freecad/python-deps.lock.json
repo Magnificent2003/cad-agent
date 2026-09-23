@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "environment": {
+    "python": "3.11.14",
+    "abi": "cpython-311",
+    "platform": "linux-x86_64",
+    "runtime_sha256": "e876573575a49d9c7fd1f76457b4c2a254c96f77512f40e727ceea237cdb13c8",
+    "baseline_sha256": "b5c6f1c13c243ffb8385819a8a1ad918f7af9feda0ff6afde5eb5535e5612be8"
+  },
+  "requirements_sha256": "bd8dfea1b4cdb22ca5124b4bf57e0fee1a9a255c860e70287a2ae625c9c95d78",
+  "packages": [
+    {
+      "name": "ezdxf",
+      "version": "1.4.4",
+      "url": "https://files.pythonhosted.org/packages/7d/fe/e4f37730ca5b5bf7de3a968a26126b404f60324d0b8ae9d59d11d6e55740/ezdxf-1.4.4-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "sha256": "7f75a4f2924ebdda0f5b2779ff2135ba92de2596c95a8fa9b1d9ebcabea1be41"
+    }
+  ]
+}

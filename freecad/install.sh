@@ -7,6 +7,7 @@ if ! test -f "$component_root/mcp/pyproject.toml"; then
   git -C "$project_root" submodule update --init -- freecad/mcp
 fi
 bash "$component_root/install_runtime.sh"
+bash "$component_root/install_python.sh"
 bash "$component_root/install_dxf.sh"
 if test -x "$project_root/.tools/uv/bin/uv"; then
   uv_binary="$project_root/.tools/uv/bin/uv"

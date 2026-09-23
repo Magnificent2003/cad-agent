@@ -25,4 +25,4 @@ bash agent/install.sh
 npm ci --prefix frontend
 npm run build --prefix frontend
 .venv/bin/python scripts/configure_env.py
-echo '依赖安装完成。DWG 转换器安装：bash cad_converter/install.sh；启动：bash scripts/dev.sh'
+echo '基础依赖安装完成。还需 bash cad_converter/install.sh 与 bash freecad/install.sh；然后 bash scripts/dev.sh 启动。'

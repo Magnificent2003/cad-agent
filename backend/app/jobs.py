@@ -30,11 +30,9 @@ def render_key(layout: str, bbox=None, settings=None) -> str:
 def worker_entry(connection, kind: str, source: str, output: str, payload: dict, settings: dict):
     """Runs in a fresh process so CAD memory and timeout failures stay isolated."""
     try:
-        from .cad import import_drawing, edit_drawing, render_drawing, query_drawing
+        from .cad import import_drawing, render_drawing
         if kind == "import":
             result = import_drawing(source, output, settings)
-        elif kind == "edit":
-            result = edit_drawing(source, output, payload["operation"], settings)
         elif kind == "restore":
             result = import_drawing(source, output, settings)
         elif kind == "render":
@@ -45,11 +43,6 @@ def worker_entry(connection, kind: str, source: str, output: str, payload: dict,
                 if artifact != stable:
                     artifact.rename(stable)
                 result["artifacts"][extension] = stable.name
-        elif kind == "query":
-            result = query_drawing(source, payload["query"])
-        elif kind == "check":
-            from .cad.constraints import check_drawing
-            result = check_drawing(source, payload["constraints"], payload["revision_id"])
         elif kind == "export":
             from .cad import export_drawing
             result = export_drawing(source, output, "dwg", settings)
@@ -92,6 +85,8 @@ class JobManager:
         return row
 
     def submit(self, drawing_id, kind, payload, session_id=None, operation_id=None):
+        if kind not in {"import", "restore", "render", "export"}:
+            raise ValueError("旧 CAD 操作已移除；编辑请通过 FreeCAD 智能体执行。")
         job_id = uuid.uuid4().hex
         with self.store.transaction() as db:
             drawing = db.execute("SELECT * FROM drawings WHERE id=?", (drawing_id,)).fetchone()
@@ -103,7 +98,7 @@ class JobManager:
                     if old["payload"] != payload or old["kind"] != kind or old["session_id"] != session_id:
                         raise JobConflict("操作编号已被不同请求使用。")
                     return self.get(old["id"])
-            if kind in {"edit", "restore"} and drawing["current_revision"] != payload.get("expected_revision"):
+            if kind in {"restore"} and drawing["current_revision"] != payload.get("expected_revision"):
                 raise JobConflict("图纸已有新版本，请刷新后重新提交。")
             if session_id:
                 session = db.execute("SELECT * FROM sessions WHERE id=? AND drawing_id=?", (session_id, drawing_id)).fetchone()
@@ -173,7 +168,7 @@ class JobManager:
         if kind == "import":
             source = root / "source" / ("original" + drawing["source_suffix"])
         else:
-            if kind in {"edit", "restore"} and drawing["current_revision"] != payload["expected_revision"]:
+            if kind in {"restore"} and drawing["current_revision"] != payload["expected_revision"]:
                 self._finish(job_id, "failed", error="版本冲突：图纸已更新，请重新查询后修改。")
                 return
             source = root / "revisions" / revision_id / "drawing.dxf"
@@ -213,7 +208,7 @@ class JobManager:
                 self._finish(job_id, "cancelled")
                 return
             result = response["result"]
-            if kind in {"import", "edit", "restore"}:
+            if kind in {"import", "restore"}:
                 result = self._publish(job, output, result)
                 if result is None:
                     return
@@ -223,7 +218,7 @@ class JobManager:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 if not target.exists():
                     output.rename(target)
-                result["preview_url"] = f"/internal/drawings/{drawing_id}/revisions/{revision_id}/preview?format=png&render_id={key}"
+                result["preview_url"] = f"/api/drawings/{drawing_id}/revisions/{revision_id}/preview?format=png&render_id={key}"
             elif kind == "export":
                 target = root / "exports" / revision_id
                 target.mkdir(parents=True, exist_ok=True)
@@ -261,7 +256,7 @@ class JobManager:
             # A crash between filesystem rename and commit can leave an unreferenced directory.
             if target.exists():
                 shutil.rmtree(target)
-            summary = {"import": "导入原始图纸", "edit": "按明确实体执行修改", "restore": "恢复历史图纸"}[job["kind"]]
+            summary = {"import": "导入原始图纸", "restore": "恢复历史图纸"}[job["kind"]]
             manifest = {"revision_id": new_id, "parent_revision": current, "job_id": job["id"], "created_at": now(), "summary": summary}
             (output / "manifest.json").write_text(encode(manifest), encoding="utf-8")
             (output / "changes.json").write_text(encode(metadata.get("changes", {})), encoding="utf-8")

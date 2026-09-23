@@ -12,7 +12,7 @@
 | DeepSeek API 模型 | deepseek-flash |
 | MCP Python SDK | 2.2.0，MCPServer |
 | FastAPI / Uvicorn | 0.141.1 / 0.53.0 |
-| ezdxf | 1.4.4 |
+| ezdxf（后端 Python 3.12 / FreeCAD Python 3.11） | 两个独立安装均为 1.4.4 |
 | Shapely | 2.1.2 |
 | Matplotlib / Pillow | 3.11.2 / 12.3.0 |
 | ODA File Converter | 27.1.0.0，官方 Qt6 AppImage |
@@ -22,13 +22,23 @@
 | Draft DXF 可选库 | 1.42，固定提交及逐文件哈希见 `freecad/dxf-library.lock.json` |
 | Vite | 7.3.6 |
 
-Python 依赖以 `uv.lock` 为准；前端以 `frontend/package-lock.json` 为准；OpenCode 以 `agent/package-lock.json`；源码模式见 `agent/source.lock.json` 与 `agent/engine/bun.lock` 为准。`scripts/env.sh` 将本地工具加入当前 shell PATH，不会加载 `.env` 或输出密钥。
+FreeCAD 额外 Python 库以 `freecad/requirements-python.txt` 和 `freecad/python-deps.lock.json` 为准，安装在 `freecad/runtime/python-deps/`；当前仅补充 ezdxf，复用官方 NumPy 1.26.4 等基础库。GUI 和无界面入口统一加载并检查。
+
+后端 Python 依赖以 `uv.lock` 为准；前端以 `frontend/package-lock.json` 为准；OpenCode 以 `agent/package-lock.json`；源码模式见 `agent/source.lock.json` 与 `agent/engine/bun.lock` 为准。`scripts/env.sh` 将本地工具加入当前 shell PATH，不会加载 `.env` 或输出密钥。
 
 Node 官方下载包已按同目录 `SHASUMS256.txt` 核对。ODA 下载文件的 SHA-256 为 `cb77a106354af98a1d355ba0191160aca3f90cb020946803e7c8132cba434dfc`；该记录用于此次下载产物复核，不冒充独立官方签名。
 
 FreeCAD 下载包按官方 GitHub Release 的 SHA-256 校验，记录见 `freecad/runtime.lock.json`。插件通过软链接加载 `freecad/mcp/addon/FreeCADMCP` 源码，实际插件目录为 `.runtime/freecad/data/FreeCAD/v1-1/Mod/`。运行方法见 [FreeCAD 实验说明](../freecad/README.md)。
 
-FreeCAD 图形进程和插件 RPC（9875）、实验智能体（4097）分别启动；原网页服务仍使用 5173/8000/4096。FreeCAD 实验复用现有模型环境变量，本次没有新增 `.env` 配置字段。
+日常使用 `bash scripts/dev.sh` 统一启动 FreeCAD（9875）、唯一智能体（4096）、后端（8000）和网页（5173），按一次 Ctrl+C 统一停止。原 4097 实验入口和旧 CAD MCP 已移除。
+
+### 连续重启的端口检查修复（2026-09-23）
+
+本机复现了“首次启动成功，立即重启则 FreeCAD 已退出（1）”：FreeCAD 结束后，RPC 健康检查留下的 TCP 连接仍处于 `TIME_WAIT`；旧 `freecad/start.sh` 使用不带 `SO_REUSEADDR` 的临时 socket 检查 9875，因此把已关闭连接误报为端口占用。此时没有监听进程，FreeCAD 的 XML-RPC 服务器自身却允许重用该端口。
+
+统一入口与 FreeCAD 独立入口现在共用 `scripts/ports.py`，以 `SO_REUSEADDR`、`bind` 和 `listen` 检查实际监听能力。真正的监听或不可重用的绑定仍会报错。启动失败会记录系统错误码和 TCP 状态到 `.runtime/startup-errors.log`；不会通过杀其他进程或自动换端口绕过冲突。检查只是启动前检查，不能消除检查后其他程序抢占端口的竞争。
+
+同一天曾出现智能体 `ServeError` 和网页 5173 冲突，原日志没有保留足够信息来确认当时的占用者，不能据此认定它们与 FreeCAD 的误判完全同源。本机 WSL 使用镜像网络；若再次出现“Linux 无监听但无法绑定”，还应核对 Windows 侧对应端口。
 
 ## 环境变量
 
@@ -36,7 +46,7 @@ FreeCAD 图形进程和插件 RPC（9875）、实验智能体（4097）分别启
 | --- | --- |
 | DEEPSEEK_API_KEY / BASE_URL / MODEL | 后端模型配置；模型调用只由 OpenCode 负责 |
 | CAD_API_BASE_URL | MCP 访问本地 API，默认 8000 |
-| CAD_INTERNAL_TOKEN | 内部 CAD API Bearer 令牌，安装时生成 |
+| CAD_INTERNAL_TOKEN | 历史字段，旧内部 CAD API 已删除；现有值可保留但不使用 |
 | AGENT_BASE_URL | 本地 OpenCode 地址，默认 4096 |
 | AGENT_SERVER_USERNAME / PASSWORD | OpenCode HTTP/SSE BasicAuth |
 | AGENT_RUNTIME | release 为发行程序，source 为本项目引擎源码 |

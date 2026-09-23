@@ -17,6 +17,7 @@ export interface Revision {
 }
 
 export interface Session {
+  engine?: string
   id: string
   title: string
   status?: string
@@ -52,4 +53,19 @@ export interface SessionEvent {
   drawing_id?: string
   revision_id?: string
   [key: string]: unknown
+}
+
+export interface Artifact {
+  id: string
+  name: string
+  bytes: number
+  task_id: string
+  drawing_id: string | null
+  preview_status: string
+  preview_error: string | null
+  download_url: string
+}
+export interface ArtifactList {
+  artifacts: Artifact[]
+  task: { id: string; status: string; error: string | null } | null
 }

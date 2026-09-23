@@ -37,6 +37,11 @@ def engine_command(env: dict[str, str]) -> list[str]:
 def engine_environment(env: dict[str, str], config: dict, runtime: Path = STATE) -> dict[str, str]:
     result = normalize_environment(env)
     # Keep upstream-required names in this boundary, out of business modules.
+    for key in ("OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT", "OPENCODE_PERMISSION", "CAD_INTERNAL_TOKEN"):
+        result.pop(key, None)
+    # Isolate user config discovery so removed CAD tools cannot return via ~/.opencode.
+    result["OPENCODE_TEST_HOME"] = str(runtime / "home")
+    (runtime / "home").mkdir(parents=True, exist_ok=True)
     result["OPENCODE_SERVER_USERNAME"] = result["AGENT_SERVER_USERNAME"]
     result["OPENCODE_SERVER_PASSWORD"] = result.get("AGENT_SERVER_PASSWORD", "")
     result["OPENCODE_CONFIG_CONTENT"] = json.dumps(config, ensure_ascii=False)

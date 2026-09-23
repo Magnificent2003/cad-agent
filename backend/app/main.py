@@ -8,10 +8,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import chat, drawings, internal
+from .api import chat, drawings, artifacts
 from .config import ROOT, Settings, get_settings
 from .events import EventBus
 from .jobs import JobConflict, JobManager
+from .agent_tasks import AgentTasks
 from agent.client import AgentClient, AgentError, event_session_id
 from agent.runtime import WORKSPACE
 from .store import Store
@@ -32,7 +33,7 @@ async def agent_events(app):
                 if kind in {"session.status", "session.idle", "session.error"}:
                     status = (event.get("properties", {}).get("status") or {}).get("type")
                     if status == "idle" or kind in {"session.idle", "session.error"}:
-                        active = state.store.one("SELECT COUNT(*) AS count FROM jobs WHERE session_id=? AND status IN ('queued','running','cancelling')", (session_id,))["count"]
+                        active = state.store.one("SELECT COUNT(*) AS count FROM jobs WHERE session_id=? AND status IN ('queued','running','cancelling')", (session_id,))["count"] or bool(state.file_tasks.active(session_id))
                         state.store.execute("UPDATE sessions SET busy=? WHERE id=?", (2 if active else 0, session_id))
                         if active:
                             event = {"type": "session.status", "properties": {"sessionID": session_id, "status": {"type": "busy"}}}
@@ -79,6 +80,7 @@ def create_app(settings: Settings | None = None, agent_client=None):
         app.state.jobs = JobManager(settings, app.state.store, app.state.bus)
         app.state.jobs.start()
         app.state.agent = agent_client or AgentClient(settings, directory=str(WORKSPACE))
+        app.state.file_tasks = AgentTasks(settings, app.state.store, app.state.bus, app.state.agent, app.state.jobs)
         app.state.agent_ready = asyncio.Event()
         events_task = asyncio.create_task(agent_events(app))
         try:
@@ -86,6 +88,7 @@ def create_app(settings: Settings | None = None, agent_client=None):
         finally:
             events_task.cancel()
             await asyncio.gather(events_task, return_exceptions=True)
+            await app.state.file_tasks.close()
             await app.state.jobs.close()
             await app.state.agent.close()
 
@@ -112,14 +115,15 @@ def create_app(settings: Settings | None = None, agent_client=None):
     async def health(request: Request):
         try:
             upstream = await asyncio.wait_for(app.state.agent.health(), 2)
-            connected = bool(upstream.get("healthy", True))
+            tools = await asyncio.wait_for(app.state.agent.mcp_status(), 10)
+            connected = bool(upstream.get("healthy", True)) and set(tools) == {"freecad"} and tools["freecad"].get("status") == "connected"
         except Exception:
             connected = False
-        return {"status": "ok", "agent": "connected" if connected else "disconnected", "dwg_available": settings.converter_available, "rag": "not_configured", "max_upload_mb": settings.cad_max_upload_mb}
+        return {"status": "ok", "agent": "connected" if connected else "disconnected", "dwg_available": settings.converter_available, "engine": "freecad", "rag": "not_configured", "max_upload_mb": settings.cad_max_upload_mb}
 
     app.include_router(drawings.router)
     app.include_router(chat.router)
-    app.include_router(internal.router)
+    app.include_router(artifacts.router)
     dist = ROOT / "frontend" / "dist"
     if (dist / "assets").exists():
         app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
