@@ -122,6 +122,7 @@ def test_launcher_source_mode_uses_engine_cwd_and_separate_session_workspace(tmp
         file.touch()
     monkeypatch.setattr(launcher, "load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.setattr(launcher, "build_config", lambda env: {"model": "test/model"})
+    monkeypatch.setattr(launcher, "prepare_model_network", lambda env: (env, "test route"))
     monkeypatch.setattr(launcher, "engine_environment", lambda env, config: runtime.engine_environment(env, config, runtime=state))
     monkeypatch.setattr("sys.argv", ["agent.launcher"])
     monkeypatch.setattr(launcher.os, "environ", {

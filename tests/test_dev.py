@@ -89,12 +89,12 @@ def test_preflight_bind_failure_stops_before_any_service_launch(tmp_path, monkey
     monkeypatch.setattr(dev.signal, "signal", lambda *args: None)
     checked = []
 
-    def check(host, port, name):
+    def check(host, port, name, **kwargs):
         checked.append(port)
         if port == 4096:
             raise RuntimeError("智能体 无法监听 127.0.0.1:4096（EADDRINUSE）")
 
-    monkeypatch.setattr(dev, "check_port", check)
+    monkeypatch.setattr(dev, "reclaim_port", check)
     monkeypatch.setattr(dev.subprocess, "run", lambda *a, **kw: pytest.fail("must not launch a process"))
     monkeypatch.setattr(dev, "run_services", lambda *a: pytest.fail("must not start services"))
     assert dev.main() == 1

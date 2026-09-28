@@ -13,7 +13,7 @@ import xmlrpc.client
 
 from dotenv import dotenv_values
 
-from scripts.ports import check_port, port_diagnostics
+from scripts.ports import check_port, port_diagnostics, reclaim_port
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -169,7 +169,8 @@ def main():
 
     try:
         for service in services:
-            check_port(service.host, service.port, service.name)
+            reclaim_port(service.host, service.port, service.name, project_root=ROOT,
+                         emit=lambda message: print(message, flush=True))
         subprocess.run(["bash", "freecad/install_python.sh", "--check"], cwd=ROOT, env=env, check=True)
         subprocess.run([python, "-m", "agent.launcher", "--check"], cwd=ROOT, env=env, check=True)
         run_services(services, env, on_ready)
