@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -100,7 +101,8 @@ class AgentClient:
     async def messages(self, session_id: str) -> list[dict[str, Any]]:
         return await self._request("GET", f"/session/{quote(session_id, safe='')}/message")
 
-    async def prompt_async(self, session_id: str, text: str, system: str | None = None, *, internal: bool = False, preview: Path | None = None) -> None:
+    async def prompt_async(self, session_id: str, text: str, system: str | None = None, *, internal: bool = False, preview: Path | None = None) -> str | None:
+        image_sha256 = None
         part: dict[str, Any] = {"type": "text", "text": text}
         if internal:
             part.update(synthetic=True, metadata={"cad_task_recovery": True})
@@ -112,6 +114,7 @@ class AgentClient:
                 logger.warning("Agent preview omitted: %s", exc)
                 system = (system or "") + "\n本次未附加预览图片：" + str(exc) + "继续使用当前任务的 CAD 输入文件。"
             else:
+                image_sha256 = hashlib.sha256(data).hexdigest()
                 payload["parts"].append({
                     "type": "file", "mime": "image/png", "filename": preview.name,
                     "url": "data:image/png;base64," + base64.b64encode(data).decode("ascii"),
@@ -119,6 +122,7 @@ class AgentClient:
         if system:
             payload["system"] = system
         await self._request("POST", f"/session/{quote(session_id, safe='')}/prompt_async", json=payload)
+        return image_sha256
 
     async def abort(self, session_id: str) -> bool:
         return bool(await self._request("POST", f"/session/{quote(session_id, safe='')}/abort"))

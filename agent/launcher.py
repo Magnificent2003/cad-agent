@@ -50,7 +50,7 @@ def main() -> None:
         raise SystemExit("请先运行 bash freecad/install.sh 安装 FreeCAD MCP")
     config = build_config(env)
     if args.check:
-        print("智能体配置有效；运行方式=" + env.get("AGENT_RUNTIME", "release") + "；模型=" + config["model"] + "；仅启用原版 FreeCAD MCP")
+        print("智能体配置有效；运行方式=" + env.get("AGENT_RUNTIME", "release") + "；模型=" + config["model"] + "；仅启用项目 FreeCAD MCP")
         return
     env = engine_environment(env, config)
     workspace = STATE / "workspace"

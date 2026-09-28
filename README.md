@@ -1,6 +1,6 @@
 # CAD Agent
 
-通过网页向智能体提出图纸任务，由智能体调用原版 FreeCAD MCP，自主编写、执行和修正 Python，并交付文件。网页只有这一条编辑链路；旧的固定 CAD 操作工具和内部编辑接口已移除。
+通过网页向智能体提出图纸任务，由智能体调用项目维护的 FreeCAD MCP，自主编写、执行和修正 Python，并交付文件。网页只有这一条编辑链路；旧的固定 CAD 操作工具和内部编辑接口已移除。
 
 ## 日常启动
 
@@ -45,9 +45,13 @@ flowchart LR
     API --> Agent[智能体：自主分析与编程]
     Agent --> MCP[项目 FreeCAD MCP]
     MCP --> FC[FreeCAD 文档与 Python API]
+    MCP --> CAD[共享二维几何：读取、布局、复核]
     FC --> Agent
+    CAD --> Agent
     Agent --> Output[本轮输出文件]
-    Output --> API
+    Output --> Check[后端回读实际 DXF]
+    Check -->|未通过：具体问题与同源预览| Agent
+    Check -->|通过登记的检查| API
     API --> Result[项目图纸历史、自动预览与下载]
 ```
 
@@ -76,6 +80,8 @@ cad-agent/
 │   ├── requirements-python.txt  FreeCAD 额外 Python 依赖清单
 │   ├── install.sh        安装软件、依赖与插件
 │   └── start.sh          启动 FreeCAD 和原版插件
+├── cad_domain/           共享二维几何、参数化布局、实际文件检查与 MCP 桥接
+├── dev_log/              优化过程、失败记录和必要的复测脚本
 ├── cad_converter/        ODA 转换器安装、启动及运行文件
 ├── scripts/              整个项目的安装、启动、诊断
 ├── samples/private/      本机工程样本，不提交 Git
@@ -95,6 +101,22 @@ cad-agent/
 模型停止生成不等于任务成功：内部压缩摘要不会显示成助手答复；输出截断、空答复或压缩后持续空闲会在同一文件任务内最多续跑两次。正常工具循环不受这个次数限制。只有正式答复正常结束、引擎与 FreeCAD 均已空闲，后端才检查并发布成果；仍未完成则明确失败。
 
 后端不解释“提取什么”或“怎样修改”，也不提供逐场景的编辑菜单。具体做法由智能体通过 FreeCAD API 组合。后端保留 ezdxf/ODA 用于上传、预览和下载转换，不作为智能体的备用编辑入口。
+
+## 已验证的二维场布辅助能力
+
+智能体继续自主选择工具和编写 Python。同一 MCP 增加三个辅助入口，共用项目 `.venv`，无需新端口或第二套几何环境：
+
+| 工具 | 用途 |
+| --- | --- |
+| `cad_inspect` | 有限量地返回实际 DXF 的实体、嵌套变换、单位声明和文件哈希；候选不自动成为已确认的红线或障碍物 |
+| `cad_layout` | 按已确认边界、障碍物、单位与间距，新增／移动／移除矩形设施和有实际宽度的道路；每次重读当前占用，支持局部坐标系，保持底图原坐标 |
+| `cad_review` | 回读实际 DXF，检查原实体保留及明确允许的改动；场布另查完整轮廓越界、碰撞、间距、尺寸、道路宽度及自交，并反馈同源预览 |
+
+修改后的 DXF 交付前必须登记检查范围。普通编辑使用 `general`；场布使用 `site_layout` 和带来源的场地事实、构件清单。参数化布局自动保存这些约定；自主 Python 生成的图也能接受同样的复核。后端发布前独立再查实际文件，不能用模型声称的“通过”代替检查。失败或未知会返回具体实体、位置和原因，驱动同一任务最多再修正两次；持续未通过不发布图纸，普通工具迭代不受此上限限制。
+
+检查报告与图片绑定实际文件哈希，文件再次变化后需要重新复核。纯读图和非 CAD 报告不要求生成图纸。单位不能由纸面比例推算；不支持或未确认的事实保持未知。设施放不下时布局工具明确失败，不自动缩小尺寸、放宽间距。
+
+**验证范围**：支持有可靠二维轮廓的直线闭合多段线及可明确展开的块、矩形设施、等宽直线段道路。已验证连续编辑、旋转场地、历史失败成果的重叠／道路错误，以及真实模型自行编程后通过复核交付的合成场景。这不是完整工程验收：曲线或复杂专业对象、语义识别是否齐全、模型声明的条件是否完整覆盖用户要求、道路连通性、塔吊能力与施工规范仍需后续工作；非 DXF 格式不在本轮几何验收范围内。详情和失败过程见 [第一轮优化记录](dev_log/项目优化记录0928.md)。
 
 ## 安装到新主机
 
@@ -139,10 +161,11 @@ AGENT_RUNTIME=source bash scripts/dev.sh
 ## 日志与验证
 
 - 后端日志在启动终端；智能体服务日志：`.runtime/agent/server.log`。
-- 完整模型会话、代码与工具反馈保存在 `.runtime/agent/data/opencode/`。
+- 完整模型会话、代码与工具反馈：`.runtime/agent/data/opencode/opencode.db`（SQLite 数据库）；引擎文本日志：`.runtime/agent/data/opencode/log/opencode.log`。
 - FreeCAD 日志：`.runtime/freecad/gui.log`。
 - 启动失败与退出时的端口诊断：`.runtime/startup-errors.log`。
-- 本轮文件上下文：`data/agent-tasks/<任务ID>/context.json`；发生自动续跑时另有 `recovery.json`。
+- 每轮文件上下文：`data/agent-tasks/<任务ID>/context.json`；异常答复续跑记录在 `recovery.json`。
+- 同一任务的 `scratch/cad-review.json` 保存检查约定，`scratch/cad-review-reports/` 保存工具完整报告，`scratch/delivery-review.json` 保存后端交付检查，`scratch/review-attempts.json` 保存检查驱动的续跑记录；后两项仅在相应检查发生时生成。
 
 ```bash
 source scripts/env.sh
@@ -158,7 +181,7 @@ python scripts/verify_agent.py
 
 [智能体循环排查与复测](docs/agent-loop-validation.md) · [FreeCAD 安装与诊断](freecad/README.md) · [环境说明](docs/environment.md) · [本次自主执行接入](docs/autonomous-agent.md) · [早期 FreeCAD 文件兼容性实测](docs/freecad-validation.md)
 
-初始部署指南和需求表保留作为历史材料；实际能力、目录和启动方式以本 README 为准。
+需求表保留作为历史参考；实际能力、目录和启动方式以本 README 为准。
 
 ## 论文与研究计划
 
