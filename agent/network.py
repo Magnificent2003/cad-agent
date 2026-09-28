@@ -45,11 +45,14 @@ def prepare_model_network(env: dict[str, str]) -> tuple[dict[str, str], str]:
         try:
             with httpx.Client(proxy=address, trust_env=False, timeout=httpx.Timeout(8, connect=4)) as client:
                 response = client.get(base + '/models', headers={'Authorization': 'Bearer ' + result['DEEPSEEK_API_KEY']})
+        except ImportError:
+            errors.append('代理：当前环境不支持 SOCKS，请使用 HTTP 代理地址')
+            continue
         except (httpx.HTTPError, ValueError):
             # Exception details can contain proxy credentials. Keep diagnostics bounded and safe.
             errors.append(('直连' if route == 'direct' else '代理') + '：无法建立有效连接')
             continue
-        if response.status_code in {401, 403}:
+        if response.status_code == 401:
             raise ModelNetworkError(f'模型 API 已连接，但认证被拒绝（HTTP {response.status_code}）；不是端口占用或 CAD 工具错误。')
         if response.status_code != 200:
             errors.append(('直连' if route == 'direct' else '代理') + f'：HTTP {response.status_code}')

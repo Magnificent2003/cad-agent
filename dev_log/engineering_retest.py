@@ -57,7 +57,7 @@ def main():
                  for message in history for part in message['parts'] if part['type'] == 'tool']
         progress = {'status': result['task']['status'], 'tools': tools}
         if progress != previous:
-            print(json.dumps(progress, ensure_ascii=False), flush=True)
+            print(json.dumps({'status': progress['status'], 'tool_count': len(tools), 'latest': tools[-2:]}, ensure_ascii=False), flush=True)
             previous = progress
         if result['task']['status'] not in {'running', 'preparing', 'collecting', 'stopping'}:
             record.update(elapsed_seconds=round(time.time() - record['started']), result=result,

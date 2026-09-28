@@ -144,3 +144,45 @@ def test_reclaim_refuses_to_kill_its_own_invoker():
         with pytest.raises(RuntimeError, match="当前启动终端/祖先进程"):
             reclaim_port("127.0.0.1", owner.getsockname()[1], emit=lambda _: None)
         assert owner.fileno() >= 0
+
+
+def test_reclaim_leaves_same_port_on_an_independent_address_alive():
+    import subprocess
+    import sys
+
+    from scripts.ports import reclaim_port
+
+    code = (
+        "import socket,time; s=socket.socket(); s.bind(('127.0.0.1',0)); "
+        "s.listen(); print(s.getsockname()[1],flush=True); time.sleep(60)"
+    )
+    owner = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)
+    try:
+        port = int(owner.stdout.readline())
+        with socket.socket() as independent:
+            independent.bind(("127.0.0.2", port))
+            independent.listen()
+            reclaim_port("127.0.0.1", port, emit=lambda _: None, grace=0.1)
+            owner.wait(timeout=3)
+            check_port("127.0.0.1", port)
+            with socket.create_connection(("127.0.0.2", port), timeout=1):
+                connection, _ = independent.accept()
+                connection.close()
+    finally:
+        if owner.poll() is None:
+            owner.kill()
+        owner.wait(timeout=3)
+        owner.stdout.close()
+
+
+def test_windows_timeout_becomes_a_startup_diagnostic(monkeypatch):
+    import subprocess
+
+    from scripts.ports import _windows_run
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired("powershell.exe", 15)
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+    with pytest.raises(RuntimeError, match="Windows 端口查询/清理超过 15 秒"):
+        _windows_run("powershell.exe", "Get-NetTCPConnection")

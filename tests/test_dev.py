@@ -101,3 +101,42 @@ def test_preflight_bind_failure_stops_before_any_service_launch(tmp_path, monkey
     assert checked == [9875, 8000, 4096]
     assert "4096（EADDRINUSE）" in capsys.readouterr().err
     assert "4096（EADDRINUSE）" in (tmp_path / ".runtime/startup-errors.log").read_text()
+
+
+def test_cleanup_finishes_after_repeated_interrupts_and_restores_handlers(monkeypatch):
+    real_signal_group = dev.signal_group
+    original = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    steps = []
+    processes = []
+
+    def interrupt(*_):
+        raise KeyboardInterrupt
+
+    def begin_cleanup(service, launched):
+        processes.extend(process for _, process in launched)
+        raise KeyboardInterrupt
+
+    def signal_group(process, sig):
+        if sig == signal.SIGTERM:
+            os.kill(os.getpid(), signal.SIGINT)
+            os.kill(os.getpid(), signal.SIGTERM)
+        real_signal_group(process, sig)
+        steps.append(sig)
+
+    monkeypatch.setattr(dev, "wait_ready", begin_cleanup)
+    monkeypatch.setattr(dev, "signal_group", signal_group)
+    for sig in original:
+        signal.signal(sig, interrupt)
+    try:
+        service = dev.Service("test", [sys.executable, "-c", "import time; time.sleep(60)"], 0)
+        with pytest.raises(KeyboardInterrupt):
+            dev.run_services([service], dict(os.environ), lambda: None)
+        assert steps == [signal.SIGTERM, signal.SIGKILL]
+        assert all(process.poll() is not None for process in processes)
+        assert all(signal.getsignal(sig) is interrupt for sig in original)
+    finally:
+        for sig, handler in original.items():
+            signal.signal(sig, handler)
+        for process in processes:
+            real_signal_group(process, signal.SIGKILL)
+            process.wait(timeout=3)

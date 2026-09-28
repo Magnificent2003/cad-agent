@@ -71,17 +71,31 @@ def _ancestors(pid):
     return result
 
 
-def _linux_owners(port):
+def _conflicting_addresses(host):
+    addresses = {item[4][0] for item in socket.getaddrinfo(host, 0, type=socket.SOCK_STREAM)}
+    # An IPv6 wildcard can also accept IPv4 connections (dual-stack socket).
+    return addresses | {"*", "::"} | ({"0.0.0.0"} if any(":" not in value for value in addresses) else set())
+
+
+def _linux_owners(port, host="127.0.0.1"):
     """Inspect listeners only, never clients connected to the same port."""
     result = subprocess.run(["ss", "-H", "-ltnp", f"( sport = :{port} )"],
                             capture_output=True, text=True, timeout=3)
     if result.returncode:
         raise RuntimeError("无法识别 Linux 端口所有者：ss 执行失败。")
     owners = {}
-    for name, value in re.findall(r'\("([^"\n]+)",pid=(\d+),', result.stdout):
-        pid = int(value)
-        if state := _process(pid):
-            owners[pid] = (name, state[1])
+    addresses = _conflicting_addresses(host)
+    for line in result.stdout.splitlines():
+        fields = line.split(maxsplit=5)
+        if len(fields) < 5:
+            continue
+        address = fields[3].rsplit(":", 1)[0].strip("[]")
+        if address not in addresses:
+            continue
+        for name, value in re.findall(r'\("([^"\n]+)",pid=(\d+),', line):
+            pid = int(value)
+            if state := _process(pid):
+                owners[pid] = (name, state[1])
     return owners
 
 
@@ -143,18 +157,27 @@ def _powershell():
 
 
 def _windows_run(executable, command):
-    result = subprocess.run([executable, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-                             "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); "
-                             "$ErrorActionPreference='Stop'; " + command],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
+    try:
+        result = subprocess.run([executable, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+                                 "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); "
+                                 "$ErrorActionPreference='Stop'; " + command],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Windows 端口查询/清理超过 15 秒；请检查 PowerShell 与 WSL 互通后重试。") from exc
     if result.returncode:
         raise RuntimeError("Windows 端口清理失败：" + (result.stderr.strip() or result.stdout.strip())[:1200])
     return result.stdout.strip()
 
 
-def _windows_owners(executable, port):
+def _windows_address_filter(host):
+    values = ",".join("'" + value.replace("'", "''") + "'" for value in sorted(_conflicting_addresses(host)))
+    return f"Where-Object {{ @({values}) -contains $_.LocalAddress }} | "
+
+
+def _windows_owners(executable, port, host="127.0.0.1"):
     output = _windows_run(executable, f"$owners = @(Get-NetTCPConnection -State Listen -LocalPort {int(port)} "
-                         "-ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | "
+                         "-ErrorAction SilentlyContinue | " + _windows_address_filter(host) +
+                         "Select-Object -ExpandProperty OwningProcess -Unique | "
                          "ForEach-Object { $p=Get-Process -Id $_ -ErrorAction SilentlyContinue; "
                          "if ($p) { @{pid=$p.Id; name=$p.ProcessName} } }); "
                          "ConvertTo-Json -InputObject $owners -Compress")
@@ -165,7 +188,7 @@ def _windows_owners(executable, port):
         raise RuntimeError("Windows 未返回可识别的端口所有者信息。") from exc
 
 
-def _stop_windows(executable, port, owners, emit):
+def _stop_windows(executable, port, owners, emit, host="127.0.0.1"):
     for pid, name in owners.items():
         if pid <= 4 or name.lower() in {"system", "registry", "vmmem", "vmmemwsl", "wslhost", "wslservice"}:
             raise RuntimeError(f"Windows 端口 {port} 属于系统/WSL 进程 {name} (PID {pid})，"
@@ -174,7 +197,8 @@ def _stop_windows(executable, port, owners, emit):
         # Recheck ownership inside Windows immediately before terminating it.
         _windows_run(executable, f"$p=Get-Process -Id {pid} -ErrorAction SilentlyContinue; "
                      f"$owner=@(Get-NetTCPConnection -State Listen -LocalPort {int(port)} "
-                     "-ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess); "
+                     "-ErrorAction SilentlyContinue | " + _windows_address_filter(host) +
+                     "Select-Object -ExpandProperty OwningProcess); "
                      f"if ($p -and ($owner -contains {pid}) -and $p.ProcessName -eq "
                      f"'{name.replace(chr(39), chr(39) * 2)}') {{ Stop-Process -Id {pid} -Force }}")
 
@@ -192,11 +216,11 @@ def reclaim_port(host, port, name="服务", *, project_root=None, emit=print, gr
     except RuntimeError:
         pass
     emit(f"{name} 端口 {host}:{port} 已占用，正在清理冲突进程……")
-    owners = _linux_owners(port)
+    owners = _linux_owners(port, host)
     supervisors = _old_supervisors(owners, project_root)
     if supervisors:
         _stop_linux(supervisors, grace=9.0, emit=emit)
-        owners = _linux_owners(port)
+        owners = _linux_owners(port, host)
     if owners:
         _stop_linux(owners, grace=grace, emit=emit)
     # Let close/exit propagate, but do not mistake TIME_WAIT for a live owner.
@@ -208,9 +232,9 @@ def reclaim_port(host, port, name="服务", *, project_root=None, emit=print, gr
             time.sleep(0.1)
     executable = _powershell()
     if executable:
-        windows = _windows_owners(executable, port)
+        windows = _windows_owners(executable, port, host)
         if windows:
-            _stop_windows(executable, port, windows, emit)
+            _stop_windows(executable, port, windows, emit, host)
             for _ in range(20):
                 try:
                     check_port(host, port, name)

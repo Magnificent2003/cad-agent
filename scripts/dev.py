@@ -113,19 +113,28 @@ def run_services(services, env, on_ready):
             check_processes(processes)
             time.sleep(0.5)
     finally:
-        print("正在停止本次启动的全部服务……", flush=True)
-        # Signal owned groups even if a leader exited: MCP children may remain.
-        for _, process in reversed(processes):
-            signal_group(process, signal.SIGTERM)
-        deadline = time.monotonic() + 8
-        for _, process in reversed(processes):
-            try:
-                process.wait(timeout=max(0, deadline - time.monotonic()))
-            except subprocess.TimeoutExpired:
-                pass
-        for _, process in reversed(processes):
-            signal_group(process, signal.SIGKILL)
-            process.wait()
+        # A second Ctrl+C or a new launcher stopping this supervisor must not
+        # interrupt its final KILL/wait and leave half the service tree alive.
+        previous_handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+        for sig in previous_handlers:
+            signal.signal(sig, signal.SIG_IGN)
+        try:
+            print("正在停止本次启动的全部服务……", flush=True)
+            # Signal owned groups even if a leader exited: MCP children may remain.
+            for _, process in reversed(processes):
+                signal_group(process, signal.SIGTERM)
+            deadline = time.monotonic() + 8
+            for _, process in reversed(processes):
+                try:
+                    process.wait(timeout=max(0, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    pass
+            for _, process in reversed(processes):
+                signal_group(process, signal.SIGKILL)
+                process.wait()
+        finally:
+            for sig, handler in previous_handlers.items():
+                signal.signal(sig, handler)
 
 
 def main():
