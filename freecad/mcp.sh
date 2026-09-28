@@ -8,4 +8,5 @@ if ! test -x "$component_root/mcp/.venv/bin/freecad-mcp"; then
   exit 1
 fi
 exec "$component_root/mcp/.venv/bin/freecad-mcp" \
+  --port "${FREECAD_RPC_PORT:-9875}" \
   --freecadcmd "bash \"$component_root/run_headless.sh\"" "$@"

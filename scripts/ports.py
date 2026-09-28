@@ -12,6 +12,24 @@ import subprocess
 import time
 
 
+class UnownedPortError(RuntimeError):
+    """Bind was refused but no terminable listener could be identified."""
+
+
+def available_alternative(host, preferred, excluded=()):
+    """Find a nearby internal port without terminating any other service."""
+    candidates = range(preferred + 1, min(preferred + 33, 65536))
+    for port in candidates:
+        if port in excluded:
+            continue
+        try:
+            check_port(host, port)
+            return port
+        except RuntimeError:
+            continue
+    raise RuntimeError(f"{preferred} 后续 32 个端口中没有可用的内部通信端口。")
+
+
 def port_diagnostics(port: int) -> str:
     """Include listeners and TIME_WAIT, without inspecting process environments."""
     try:
@@ -231,6 +249,7 @@ def reclaim_port(host, port, name="服务", *, project_root=None, emit=print, gr
         except RuntimeError:
             time.sleep(0.1)
     executable = _powershell()
+    windows = {}
     if executable:
         windows = _windows_owners(executable, port, host)
         if windows:
@@ -242,13 +261,14 @@ def reclaim_port(host, port, name="服务", *, project_root=None, emit=print, gr
                 except RuntimeError:
                     time.sleep(0.1)
         else:
-            emit(f"  Windows 未发现端口 {port} 的监听进程；可能是系统保留范围或 WSL 镜像网络转发。")
+            emit(f"  Windows 未发现端口 {port} 的监听进程；正在复查实际绑定状态。")
     try:
         check_port(host, port, name)
     except RuntimeError as exc:
-        raise RuntimeError(f"自动清理后 {name} 端口 {port} 仍不可用，尚未启动新服务。\n"
-                           "无法定位的系统保留端口不能靠杀进程解除；请检查 Windows 端口保留/转发，"
-                           "或确认是否有其他用户的进程占用。\n" + str(exc)) from exc
+        error = UnownedPortError if not owners and not windows else RuntimeError
+        raise error(f"自动清理后 {name} 端口 {port} 仍不可用，尚未启动新服务。\n"
+                    "绑定仍被系统拒绝；尚未确定占用来源，不能仅据此认定是系统保留端口。\n"
+                    + str(exc)) from exc
 
 
 def main():

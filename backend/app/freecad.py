@@ -2,6 +2,8 @@
 import asyncio
 import xmlrpc.client
 
+from .config import get_settings
+
 
 class Transport(xmlrpc.client.Transport):
     def make_connection(self, host):
@@ -11,7 +13,7 @@ class Transport(xmlrpc.client.Transport):
 
 
 def status():
-    with xmlrpc.client.ServerProxy('http://127.0.0.1:9875', transport=Transport()) as rpc:
+    with xmlrpc.client.ServerProxy(f'http://127.0.0.1:{get_settings().freecad_rpc_port}', transport=Transport()) as rpc:
         return rpc.get_rpc_status()
 
 

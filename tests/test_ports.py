@@ -186,3 +186,32 @@ def test_windows_timeout_becomes_a_startup_diagnostic(monkeypatch):
     monkeypatch.setattr(subprocess, "run", timeout)
     with pytest.raises(RuntimeError, match="Windows 端口查询/清理超过 15 秒"):
         _windows_run("powershell.exe", "Get-NetTCPConnection")
+
+
+def test_unowned_bound_socket_can_use_an_alternative(monkeypatch):
+    from scripts import ports
+
+    # Actual bind without listen reproduces EADDRINUSE with an empty listener list.
+    monkeypatch.setattr(ports, "_powershell", lambda: None)
+    with socket.socket() as hidden:
+        hidden.bind(("127.0.0.1", 0))
+        host, port = hidden.getsockname()
+        assert ports._linux_owners(port, host) == {}
+        with pytest.raises(ports.UnownedPortError):
+            ports.reclaim_port(host, port, emit=lambda _: None)
+        chosen = ports.available_alternative(host, port, {port + 1})
+        assert chosen != port + 1
+        check_port(host, chosen)
+        # An unidentified owner is left intact, not killed to obtain the port.
+        hidden.listen(1)
+
+
+def test_internal_port_selection_does_not_hide_protected_owner():
+    from scripts import ports
+
+    with socket.socket() as owner:
+        owner.bind(("127.0.0.1", 0))
+        owner.listen()
+        with pytest.raises(RuntimeError) as error:
+            ports.reclaim_port("127.0.0.1", owner.getsockname()[1], emit=lambda _: None)
+        assert not isinstance(error.value, ports.UnownedPortError)

@@ -544,8 +544,10 @@ class FreeCADRPC:
         return save_active_screenshot(save_path, view_name, width, height, focus_object)
 
 
-def start_rpc_server(port: int = 9875) -> str:
+def start_rpc_server(port: int | None = None) -> str:
     global rpc_server_thread, rpc_server_instance
+    if port is None:
+        port = int(os.environ.get("FREECAD_RPC_PORT", "9875"))
 
     if rpc_server_instance:
         host, bound_port = rpc_server_instance.server_address

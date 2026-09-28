@@ -13,7 +13,7 @@ import xmlrpc.client
 
 from dotenv import dotenv_values
 
-from scripts.ports import check_port, port_diagnostics, reclaim_port
+from scripts.ports import UnownedPortError, available_alternative, check_port, port_diagnostics, reclaim_port
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -42,9 +42,9 @@ class RPCTransport(xmlrpc.client.Transport):
         return connection
 
 
-def freecad_ready():
+def freecad_ready(port=9875):
     try:
-        with xmlrpc.client.ServerProxy("http://127.0.0.1:9875", transport=RPCTransport()) as rpc:
+        with xmlrpc.client.ServerProxy(f"http://127.0.0.1:{port}", transport=RPCTransport()) as rpc:
             return rpc.ping() is True
     except (OSError, xmlrpc.client.Error):
         return False
@@ -68,7 +68,7 @@ def wait_ready(service, processes, timeout=90):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         check_processes(processes)
-        ready = freecad_ready() if service.name == "FreeCAD" else port_open(service.port, service.host)
+        ready = freecad_ready(service.port) if service.name == "FreeCAD" else port_open(service.port, service.host)
         if ready:
             print(f"  已启动 {service.name}：127.0.0.1:{service.port}", flush=True)
             return
@@ -151,11 +151,17 @@ def main():
         raise SystemExit("请先执行 npm run build --prefix frontend。")
     if not (ROOT / "freecad/runtime/squashfs-root/AppRun").is_file():
         raise SystemExit("请先运行 bash freecad/install.sh。FreeCAD 是必需组件，没有旧智能体备用入口。")
+    try:
+        rpc_port = int(config.get("FREECAD_RPC_PORT") or 9875)
+    except ValueError:
+        raise SystemExit("FREECAD_RPC_PORT 必须为 1～65535 的整数。")
+    if not 1 <= rpc_port <= 65535:
+        raise SystemExit("FREECAD_RPC_PORT 必须为 1～65535 的整数。")
     env = dict(os.environ)
     env["PATH"] = str(ROOT / ".tools/node/bin") + os.pathsep + env.get("PATH", "")
     python = str(ROOT / ".venv/bin/python")
     services = [
-        Service("FreeCAD", ["bash", "freecad/start.sh"], 9875, ROOT / ".runtime/freecad/gui.log"),
+        Service("FreeCAD", ["bash", "freecad/start.sh"], rpc_port, ROOT / ".runtime/freecad/gui.log"),
         Service("业务后端", [python, "-m", "uvicorn", "backend.app.main:app", "--host", api.hostname,
                            "--port", str(api.port or 8000), "--workers", "1"], api.port or 8000, host=api.hostname),
         Service("FreeCAD 智能体", [python, "-m", "agent.launcher"], agent.port or 4096,
@@ -178,8 +184,16 @@ def main():
 
     try:
         for service in services:
-            reclaim_port(service.host, service.port, service.name, project_root=ROOT,
-                         emit=lambda message: print(message, flush=True))
+            try:
+                reclaim_port(service.host, service.port, service.name, project_root=ROOT,
+                             emit=lambda message: print(message, flush=True))
+            except UnownedPortError:
+                if service.name != "FreeCAD":
+                    raise
+                original = service.port
+                service.port = available_alternative(service.host, original, {s.port for s in services})
+                print(f"FreeCAD 端口 {original} 的占用无法定位，本次改用 {service.port}；已同步后端与 MCP。", flush=True)
+        env["FREECAD_RPC_PORT"] = str(services[0].port)
         subprocess.run(["bash", "freecad/install_python.sh", "--check"], cwd=ROOT, env=env, check=True)
         subprocess.run([python, "-m", "agent.launcher", "--check"], cwd=ROOT, env=env, check=True)
         run_services(services, env, on_ready)

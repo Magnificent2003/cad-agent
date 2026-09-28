@@ -74,7 +74,7 @@ def test_startup_timeout_is_actionable_and_dead_service_is_not_ready(monkeypatch
         dev.wait_ready(service, [], timeout=0)
     process = subprocess.Popen([sys.executable, "-c", "raise SystemExit(7)"], start_new_session=True)
     process.wait(timeout=5)
-    monkeypatch.setattr(dev, "freecad_ready", lambda: True)
+    monkeypatch.setattr(dev, "freecad_ready", lambda *_: True)
     with pytest.raises(RuntimeError, match="FreeCAD 已退出（7）"):
         dev.wait_ready(service, [(service, process)])
 
@@ -140,3 +140,27 @@ def test_cleanup_finishes_after_repeated_interrupts_and_restores_handlers(monkey
         for process in processes:
             real_signal_group(process, signal.SIGKILL)
             process.wait(timeout=3)
+
+
+def test_freecad_fallback_is_shared_with_every_service(tmp_path, monkeypatch):
+    application = tmp_path / "freecad/runtime/squashfs-root/AppRun"
+    application.parent.mkdir(parents=True)
+    application.touch()
+    monkeypatch.setattr(dev, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["dev"])
+    monkeypatch.setattr(dev.os, "environ", {})
+    monkeypatch.setattr(dev.signal, "signal", lambda *args: None)
+    monkeypatch.setattr(dev.subprocess, "run", lambda *a, **kw: None)
+
+    def reclaim(host, port, name, **kwargs):
+        if name == "FreeCAD":
+            raise dev.UnownedPortError("unidentified bind conflict")
+
+    monkeypatch.setattr(dev, "reclaim_port", reclaim)
+    monkeypatch.setattr(dev, "available_alternative", lambda *args: 9876)
+    launched = []
+    monkeypatch.setattr(dev, "run_services", lambda services, env, ready: launched.append((services, env)))
+    assert dev.main() == 0
+    services, env = launched[0]
+    assert [s.port for s in services] == [9876, 8000, 4096, 5173]
+    assert env["FREECAD_RPC_PORT"] == "9876"
