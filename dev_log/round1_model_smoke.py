@@ -1,3 +1,4 @@
+# Historical experiment for commit 2bd013d; retired after the real engineering comparison.
 """One opt-in paid model smoke via the same API as the web UI.
 
 Run only after starting dev.sh. Creates an explicitly named synthetic project;

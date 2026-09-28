@@ -1,3 +1,4 @@
+# Historical experiment for commit 2bd013d; retired after the real engineering comparison.
 """Read-only regression of one existing historical delivery; no model/server.
 
 Run from the repository: .venv/bin/python dev_log/round1_validation.py

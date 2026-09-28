@@ -32,7 +32,6 @@ class AgentTasks:
         self.poll_interval = 2
         self.timeout = 3600
         self.max_recoveries = 2
-        self.max_review_retries = 2
         self.idle_reply_grace = 8
         self.cleanup_inactive_bindings()
 
@@ -152,10 +151,7 @@ class AgentTasks:
                    'output_directory': str((root / 'output').resolve()),
                    'scratch_directory': str((root / 'scratch').resolve()),
                    'previous_artifacts': [{'name': item['name'], 'path': item['path']} for item in previous],
-                   'request': text, 'preview': preview,
-                   'review': {'manifest': str((root / 'scratch/cad-review.json').resolve()),
-                              'render_settings': self.settings.cad_settings(),
-                              'note': '修改后的 DXF 交付前使用 cad_review；场布选择 site_layout，未知事实不算通过。'}}
+                   'request': text, 'preview': preview}
         # This inventory belongs to FreeCAD's Python, not the backend virtualenv.
         installed = ROOT / 'freecad/runtime/python-deps/installed.lock.json'
         if installed.is_file():
@@ -214,16 +210,11 @@ class AgentTasks:
             raise
         return task_id
 
-    def collect(self, task, checked_files=None, contract_sha256=None):
+    def collect(self, task):
         root = self.root(task['id'])
         for item in task['inputs']:
             if digest(item['path']) != item['sha256']:
                 raise ValueError('智能体修改了输入副本，本轮成果未发布；项目原图仍保留。')
-        if checked_files is not None:
-            contract = root / 'scratch/cad-review.json'
-            current_contract = digest(contract) if contract.is_file() else None
-            if current_contract != contract_sha256:
-                raise ValueError('检查契约在验收后发生变化，本轮成果未发布。')
         directory = (root / 'output').resolve()
         if directory.parent != root.resolve() or (root / 'output').is_symlink():
             raise ValueError('输出目录被替换，本轮成果未发布。')
@@ -240,9 +231,6 @@ class AgentTasks:
             target = self.settings.data_dir / 'artifacts' / artifact_id / source.name
             target.parent.mkdir(parents=True)
             before = digest(source)
-            if (checked_files is not None and source.suffix.lower() == '.dxf'
-                    and checked_files.get(relative.as_posix()) != before):
-                raise ValueError('DXF 在验收后新增或变化，本轮成果未发布。')
             shutil.copy2(source, target)
             if digest(target) != before or digest(source) != before:
                 raise ValueError('输出文件仍在变化，本轮成果未发布。')
@@ -274,7 +262,6 @@ class AgentTasks:
         task = self.store.one('SELECT * FROM agent_tasks WHERE id=?', (task_id,))
         session_id = task['session_id']
         recoveries = []
-        review_retries = []
         idle_since = None
         try:
             while True:
@@ -338,51 +325,8 @@ class AgentTasks:
                             if terminal['info'].get('finish') != 'stop':
                                 self.set_status(task_id, 'failed', '模型未正常结束本轮答复；本轮输出未自动发布。')
                                 return
-                            # A model's final answer cannot substitute for a check of saved geometry.
-                            from cad_domain.delivery import feedback_preview, feedback_summary, mark_feedback, review_delivery
-                            context = json.loads((self.root(task_id) / 'context.json').read_text())
-                            review = await asyncio.to_thread(review_delivery, context)
-                            if self.store.one('SELECT status FROM agent_tasks WHERE id=?', (task_id,))['status'] == 'stopping':
-                                continue
-                            if review['status'] != 'passed':
-                                if len(review_retries) >= self.max_review_retries:
-                                    details = '；'.join(issue.get('message', issue.get('code', '未知问题'))
-                                                       for issue in review.get('issues', [])[:3])
-                                    self.set_status(task_id, 'failed', '成果检查未通过，未发布本轮文件：' + details)
-                                    return
-                                preview = await asyncio.to_thread(feedback_preview, context, review, self.settings.cad_settings())
-                                if self.store.one('SELECT status FROM agent_tasks WHERE id=?', (task_id,))['status'] == 'stopping':
-                                    continue
-                                previous = {message['info']['id'] for message in messages}
-                                review_retries.append({'at': now(), 'status': review['status'],
-                                                       'files': [{key: item.get(key) for key in ('name', 'file_sha256', 'status')}
-                                                                 for item in review.get('files', [])],
-                                                       'issues': review.get('issues', [])})
-                                (self.root(task_id) / 'scratch/review-attempts.json').write_text(encode(review_retries), encoding='utf-8')
-                                # This budget only bounds post-answer recovery; ordinary tool use is unrestricted.
-                                image_sha = await self.agent.prompt_async(
-                                    session_id,
-                                    '刚才的答复尚未通过实际成果检查，文件尚未发布。继续同一任务，先读取下面的具体问题，'
-                                    '修正当前 DXF 或补齐真实依据，再调用 cad_review；不要重复完成的分析，不得放宽要求冒充通过。'
-                                    '如依据不足或无法布置，明确未完成的内容，并从 output_directory 移走未通过的候选图到 scratch_directory；'
-                                    '可以仅交付说明缺口的报告，不得宣称施工验收通过。附件来自当前实际输出文件。\n'
-                                    + encode(feedback_summary(review)),
-                                    system='本轮可信文件任务上下文（以此覆盖历史文件目标）：' + encode(context),
-                                    internal=True, preview=preview,
-                                )
-                                if image_sha and preview:
-                                    item = next(item for item in review['files'] if item.get('preview', {}).get('path') == str(preview))
-                                    try:
-                                        await asyncio.to_thread(mark_feedback, context, Path(item['path']), item, image_sha256=image_sha)
-                                    except ValueError:
-                                        # A fast continuation may already have changed the file.
-                                        # Its next check must supply fresh feedback; do not abort the repair.
-                                        logger.info('Review image became stale during task continuation: %s', task_id)
-                                idle_since = None
-                                continue
                             self.set_status(task_id, 'collecting')
-                            checked = {item['name']: item['file_sha256'] for item in review['files']}
-                            await asyncio.to_thread(self.collect, task, checked, review.get('contract_sha256'))
+                            await asyncio.to_thread(self.collect, task)
                             # Abort may have arrived while copying files.
                             if self.store.one('SELECT status FROM agent_tasks WHERE id=?', (task_id,))['status'] == 'stopping':
                                 self.store.execute('DELETE FROM artifacts WHERE task_id=?', (task_id,))

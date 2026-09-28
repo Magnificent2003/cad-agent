@@ -34,8 +34,7 @@ async def test_transport_adds_file_part_and_keeps_original_user_text(tmp_path):
         return httpx.Response(204)
 
     async with AgentClient(transport=httpx.MockTransport(upstream)) as agent:
-        receipt = await agent.prompt_async('session1', '简单介绍一下这张施工图', system='trusted context', preview=path)
-        assert receipt == hashlib.sha256(data).hexdigest()
+        await agent.prompt_async('session1', '简单介绍一下这张施工图', system='trusted context', preview=path)
         await agent.prompt_async('session1', '继续完成', system='trusted context', internal=True, preview=path)
     assert payloads[0]['parts'][0] == {'type': 'text', 'text': '简单介绍一下这张施工图'}
     assert payloads[1]['parts'][0]['synthetic'] is True
@@ -71,7 +70,7 @@ async def test_invalid_preview_continues_text_request_without_image(tmp_path, mo
         return httpx.Response(204)
 
     async with AgentClient(transport=httpx.MockTransport(upstream)) as agent:
-        assert await agent.prompt_async('session1', '看图', system='current task', preview=path) is None
+        await agent.prompt_async('session1', '看图', system='current task', preview=path)
     assert payloads[0]['parts'] == [{'type': 'text', 'text': '看图'}]
     assert payloads[0]['system'].startswith('current task')
     assert '未附加预览图片' in payloads[0]['system']
