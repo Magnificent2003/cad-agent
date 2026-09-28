@@ -159,3 +159,7 @@ python scripts/verify_agent.py
 [智能体循环排查与复测](docs/agent-loop-validation.md) · [FreeCAD 安装与诊断](freecad/README.md) · [环境说明](docs/environment.md) · [本次自主执行接入](docs/autonomous-agent.md) · [早期 FreeCAD 文件兼容性实测](docs/freecad-validation.md)
 
 初始部署指南和需求表保留作为历史材料；实际能力、目录和启动方式以本 README 为准。
+
+## 论文与研究计划
+
+论文骨架、文献和研究待办见 [manuscript/README.md](manuscript/README.md)。在项目根目录运行 `bash manuscript/build.sh`，生成 `manuscript/build/manuscript.pdf`；编译不依赖 CAD 服务。

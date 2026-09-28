@@ -16,6 +16,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+manuscript/
 node_modules/
 frontend/dist/
 frontend/test-results/
