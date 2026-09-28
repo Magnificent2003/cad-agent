@@ -22,6 +22,7 @@ bash scripts/dev.sh
 | `backend/app/` | 接收图纸、准备任务副本、收集成果和生成预览 |
 | `agent/` | 模型配置、提示词、任务上下文和自主调用工具的循环；引擎源码在 `agent/engine/` |
 | `freecad/mcp/` | 本仓库维护的 MCP 服务和 FreeCAD 插件，执行模型编写的代码并返回结果或错误 |
+| `cad_domain/` | 实验性场布辅助：图纸读取、参数化布局、实际 DXF 几何复核；由同一 MCP 提供 |
 | `cad_converter/` | ODA 格式转换，供 DWG 导入和导出使用 |
 | `scripts/dev.py`、`scripts/ports.py` | 一键启动、回收冲突端口、退出清理 |
 | `agent/network.py` | 检查并选择模型连接路径，避免失效的本地代理阻断模型 |
@@ -30,7 +31,9 @@ bash scripts/dev.sh
 
 `agent/prompts/cad.txt` 决定工作方式；`agent/config.json` 管理模型与 MCP 配置。修改 MCP 源码后重新一键启动即可。修改引擎源码时使用 `AGENT_RUNTIME=source bash scripts/dev.sh`，首次需执行 `bash agent/install.sh --source`。
 
-本次修复已用白桥实际场布任务验证模型调用，并实际验证旧服务接管及 Windows 端口冲突回收。第一轮场布辅助模块和强制检查已撤回，当前不提供自动工程验收；实际对照有局部改善，但关键要求未满足且漏检被放行，详见 [工程复测记录](dev_log/工程复测与回滚0928.md)。后续试验和失败记录统一放在 `dev_log/`。图纸成功生成或预览不代表符合施工规范。
+场布辅助模块已恢复为实验版本：`cad_inspect` 读取实际 DXF，`cad_layout` 按明确条件布局，`cad_review` 回读成果并复核；后端发布前也执行检查。随 `bash scripts/dev.sh` 自动加载，无需自然语言激活或新增端口。模型仍可选用通用 Python；若要专测参数化布局，可明确要求“使用 cad_layout 布置，并用 cad_review 的 site_layout 模式复核”。
+
+已有真实场布对照显示局部改善，但复杂建筑识别、检查范围完整性和塔吊覆盖尚不可靠，检查通过不代表工程验收通过。恢复范围和测试用法见 [模块恢复记录](dev_log/场布模块恢复0928.md)，原始对照及失败证据见 [工程复测记录](dev_log/工程复测与回滚0928.md)。试验和失败记录统一留在 `dev_log/`。
 
 ## 文件与日志在哪里
 

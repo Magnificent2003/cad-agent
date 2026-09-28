@@ -34,6 +34,7 @@ from .operations import (
 )
 from .prompt_text import ASSET_CREATION_STRATEGY
 from .server_state import ServerState
+from .site_tools import run_site_tool
 
 
 logging.basicConfig(
@@ -88,6 +89,86 @@ def get_freecad_connection() -> FreeCADConnection:
                 "Failed to connect to FreeCAD. Make sure the FreeCAD addon is running."
             )
     return state.freecad_connection
+
+
+@mcp.tool(structured_output=False)
+def cad_inspect(
+    context_path: str = "", path: str = "", handles: list[str] | None = None, limit: int = 30,
+) -> list[TextContent | ImageContent]:
+    """Inspect an actual DXF for hashes, exact handles, geometry and scene candidates.
+
+    context_path is supplied by the active task plugin and independently checked
+    by the worker. path selects an authorized task file; empty uses the input.
+    handles narrows inspection to exact entity handles; limit bounds candidates.
+    Candidates, layer names and paper scale do not confirm engineering semantics
+    or drawing units. Keep unsupported or ambiguous scene facts unknown.
+    This tool is useful for evidence gathering, not a mandatory editing pipeline.
+    """
+    return run_site_tool("inspect", context_path, {"path": path, "handles": handles, "limit": limit})
+
+
+@mcp.tool(structured_output=False)
+def cad_layout(
+    context_path: str = "", source: str = "", target: str = "",
+    facts: dict | None = None, components: list[dict] | None = None,
+) -> list[TextContent | ImageContent]:
+    """Create a constrained 2D DXF candidate from explicit, evidenced scene facts.
+
+    source is an authorized input/work file; target is a current-task output DXF.
+    facts.source_sha256 always binds the original task input baseline.
+    facts schema: {source_sha256: hex, units: {status: 'confirmed',
+    metres_per_unit: number, evidence: string, override_header?: true},
+    boundary: {status: 'confirmed', handles: [exactHandle], evidence: string},
+    obstacles: {status: 'confirmed', handles: [exactHandle, ...], evidence: string},
+    frame?: {origin: [drawingX, drawingY], angle_deg: number}, clearance_m?: number}.
+    An empty confirmed obstacle list requires evidence. Do not infer units from
+    paper scale or silently promote inspect candidates to confirmed facts.
+
+    components schema: [{id: string, name: string, kind: 'rectangle'|'road',
+    width_m: number, depth_m?: number, position_m?: [localMetresX, localMetresY],
+    angle_deg?: number, points_m?: [[localMetresX, localMetresY], ...],
+    operation?: 'add'|'move'|'remove', handle?: exactHandle}]. A move/remove must
+    identify its exact existing handle. The worker supports reliable 2D geometry,
+    writes a candidate only when known-fact and geometry checks pass, and persists
+    its review contract. It does not certify a complete scene or code compliance.
+    Use execute_code when this helper is insufficient; review its edited DXF too.
+    """
+    return run_site_tool("layout", context_path, {
+        "source": source, "target": target, "facts": facts, "components": components,
+    })
+
+
+@mcp.tool(structured_output=False)
+def cad_review(
+    context_path: str = "", path: str = "", profile: Literal["general", "site_layout"] = "general",
+    facts: dict | None = None, components: list[dict] | None = None,
+    allowed_changes: list[str] | None = None, render: bool = True,
+) -> list[TextContent | ImageContent]:
+    """Reopen an actual output DXF and bind its checks and preview to its file hash.
+
+    path must name a current-task output DXF, including one made by execute_code.
+    general checks baseline preservation; allowed_changes explicitly lists exact
+    baseline handles permitted to change/remove, not layer names or wildcards.
+    site_layout uses cad_layout's facts schema. Review components are manifests
+    of actual entities: [{id: string, role: 'facility'|'road', handle: exactHandle,
+    width_m?: number, depth_m?: number, label_handle?: exactHandle}]. These differ
+    from cad_layout's rectangle/road planning specs. Layout normally saves this
+    manifest automatically; omitted facts/components reuse its saved contract.
+    Custom Python geometry needs explicit role/handle declarations. Nonoccupying
+    annotations or coverage entities may be declared with role 'annotation' or
+    'coverage' and an exact handle; never exempt actual occupied geometry.
+    The review checks the declared 2D boundary, obstacles, clearances and actual
+    component geometry. A tagged site output cannot downgrade to general review.
+    Missing facts remain unknown; a passing review is not full code compliance.
+    render=True returns a PNG when available; inspect both report and actual-file
+    image before delivery. A later edit invalidates this file's earlier review.
+    The backend independently rechecks modified DXFs before publication; read-only
+    answers and non-CAD reports do not need this tool. context_path is task-bound.
+    """
+    return run_site_tool("review", context_path, {
+        "path": path, "profile": profile, "facts": facts, "components": components,
+        "allowed_changes": allowed_changes, "render": render,
+    })
 
 
 @mcp.tool(structured_output=False)
