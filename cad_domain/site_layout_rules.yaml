@@ -1,0 +1,168 @@
+{
+  "schema_version": "site-layout-rules/0.1",
+  "source": "user_provided_heuristic",
+  "description": "用户提供的概念场布估算规则。各项参数可以调整，属于本轮研究假设，不是施工规范要求。本文件使用兼容 JSON 的 YAML 格式，无需新增解析依赖。",
+  "editing_guide": {
+    "当前用途": "通用面积估算模块读取本文件；CAD Agent通过cad_site_rules获得中文规则及同图面积任务书。旧离线脚本仍可读取数值，但其路网或布局不作为Agent输入。",
+    "修改如何生效": "修改数值或中文说明后，下一次cad_site_rules调用读取新内容并返回规则哈希。模型可阅读说明并自主决策；新增说明不会自动新增几何工具能力。已有方案须重新核查采用规则和任务条件。",
+    "保留英文的原因": "字段名、设施编号和固定选项为程序标识，保持兼容；中文说明供人工及模型阅读。",
+    "明确面积的入口": "Agent调用cad_site_rules时可传overrides={\"facilities\":{\"office\":{\"area_m2\":1800}}}等明确面积；采用理由应说明。离线脚本保留--overrides入口。不支持仅在默认设施条目添加area_m2代替比例。",
+    "单位约定": "占比使用小数，如0.05表示5%；距离以米计，面积以平方米计。true表示开启，false表示关闭。"
+  },
+  "parameter_notes": {
+    "source": "规则来源标识：user_provided_heuristic 表示用户提供的经验估算。",
+    "area_basis / fallback_area_basis": "site_area 表示按作业场界面积估算；building_floor_area 表示按明确提供的总建筑面积估算，缺少该输入时当前实现回退到场地面积。默认回退口径由代码支持，单改 fallback_area_basis 文字不能新增其他口径。",
+    "existing_buildings.reference_fraction_range": "已有建筑占地的参考范围，0.4～0.6表示40%～60%；实际采用图纸量测值，不强制凑到该范围。",
+    "road.site_area_fraction / budget_mode": "道路占场地面积的预算比例；soft_upper_reference 表示软上限参考，超过时告警，不要求画满，也不是强制禁止超过的硬限制。",
+    "road.width_m / alignment": "道路宽度；spatial_facts_orthogonal_axes 表示沿空间事实给出的正交轴布置，当前算法不支持改成其他方向模式。",
+    "reserve.site_area_fraction_range / selected_fraction / mode": "剩余调整空间的建议比例范围与本轮选值；soft_planning_allowance 表示软参考。范围是说明，代码以 selected_fraction 计算当前预留目标。",
+    "facility_defaults": "六类设施共用的默认参数；可以在具体设施条目中覆盖形状、分区、净距等参数。",
+    "facility_defaults.enabled / clearance_m": "设施是否启用，以及其占地与道路、其他设施和障碍之间要求的净距。",
+    "facility_defaults.shape": "rectangle 表示矩形；aspect_ratio_range 是长宽比范围，preferred_aspect_ratio 是优先比例，当前仅支持矩形。",
+    "facility_defaults.split": "allowed 表示是否允许拆成多个区域；max_parts 是最大分区数；min_part_area_m2 是拆分后每区最小面积。",
+    "facilities[].id / name": "设施编号与图面名称。rebar=钢筋加工及堆放，formwork=模板堆放，turnover=周转材料，masonry=砌块及装修材料，office=临建办公，equipment=设备区域。",
+    "facilities[].site_area_fraction": "对应设施的估算面积占比；默认以作业场界面积为基数，用户明确给出的面积优先。",
+    "facilities[].preferences.access": "entry 表示优先靠近本轮选定的入口候选；workfaces 表示优先靠近确认和保留轮廓的综合中心。当前不是逐栋分析运输距离，也不代表入口已与场外道路接通。",
+    "excluded_this_round": "本轮不生成砂石堆场，不规划塔吊覆盖或施工提升设备。此清单是范围说明，删掉某项文字不会自动启用对应能力。",
+    "planning.grid_step_m / road_grid_step_m": "设施位置搜索步长和道路网格步长；步长越小，候选越密，通常计算量越大。",
+    "planning.site_edge_clearance_m / obstacle_clearance_m": "新增占地距作业场界和障碍轮廓的最小研究净距，不代表已经满足施工规范。",
+    "planning.frontage_max_gap_m": "设施完整占地到已连通道路面的最大距离；保存后检查还会核对最短直连接线是否被已声明障碍挡住，但不验证车辆转弯。",
+    "planning.candidate_budget": "每次尝试一种分区数量时，最多检查的矩形候选数量；不等于模型调用次数。",
+    "planning.aspect_ratio_samples": "在允许的长宽比范围内取样的数量，同时还会考虑优先长宽比。",
+    "planning.placement_order_trials": "尝试不同设施摆放顺序的次数，当前支持1～3；属于算法搜索，不是 Agent 对话轮数。",
+    "planning.uncertain_keepouts": "major_non_annotation 表示对主要待定非注释轮廓作临时避让；none 表示不添加这层保护，可用于对照实验，但不等于这些区域已确认为空地。",
+    "planning.uncertain_excluded_layer_patterns": "临时避让筛选时排除的图层名正则表达式，如道路、停车、植物、表格和辅助图层；它们不是自然语言提示词。",
+    "planning.access_candidate_limit": "每个分区保留多少个高分矩形候选，以便逐一检查实际接路条件。"
+  },
+  "area_basis": "site_area",
+  "fallback_area_basis": "site_area",
+  "existing_buildings": {
+    "reference_fraction_range": [
+      0.4,
+      0.6
+    ],
+    "policy": "只量测采用场界内的建筑轮廓并集，重叠部分不重复计数；不得为了达到参考占比而缩放、删除或排除实际建筑。"
+  },
+  "road": {
+    "site_area_fraction": 0.2,
+    "budget_mode": "soft_upper_reference",
+    "width_m": 6.0,
+    "width_source": "本轮假定的研究默认值，不代表规范规定的最小路宽。",
+    "alignment": "spatial_facts_orthogonal_axes",
+    "purpose": "连接设施临路位置与出入点；按实际连通需要延伸道路，不为凑满道路面积预算绘制无用道路。"
+  },
+  "reserve": {
+    "site_area_fraction_range": [
+      0.05,
+      0.1
+    ],
+    "selected_fraction": 0.075,
+    "mode": "soft_planning_allowance"
+  },
+  "facility_defaults": {
+    "enabled": true,
+    "clearance_m": 1.0,
+    "clearance_source": "本轮假定的几何净距，不代表规范要求的退距。",
+    "shape": {
+      "kind": "rectangle",
+      "aspect_ratio_range": [
+        1.0,
+        4.0
+      ],
+      "preferred_aspect_ratio": 2.0
+    },
+    "split": {
+      "allowed": true,
+      "max_parts": 4,
+      "min_part_area_m2": 80.0,
+      "policy": "允许分区布置时，所有分区的实际面积之和必须满足该设施完整的目标面积，不得借分区减少面积。"
+    }
+  },
+  "facilities": [
+    {
+      "id": "rebar",
+      "name": "钢筋加工及堆放",
+      "site_area_fraction": 0.05,
+      "preferences": {
+        "access": "workfaces"
+      }
+    },
+    {
+      "id": "formwork",
+      "name": "模板堆放",
+      "site_area_fraction": 0.03,
+      "preferences": {
+        "access": "workfaces"
+      }
+    },
+    {
+      "id": "turnover",
+      "name": "周转材料",
+      "site_area_fraction": 0.03,
+      "preferences": {
+        "access": "workfaces"
+      }
+    },
+    {
+      "id": "masonry",
+      "name": "砌块及装修材料",
+      "site_area_fraction": 0.02,
+      "preferences": {
+        "access": "workfaces"
+      }
+    },
+    {
+      "id": "office",
+      "name": "临建办公",
+      "site_area_fraction": 0.05,
+      "preferences": {
+        "access": "entry"
+      }
+    },
+    {
+      "id": "equipment",
+      "name": "设备区域",
+      "site_area_fraction": 0.02,
+      "preferences": {
+        "access": "workfaces"
+      }
+    }
+  ],
+  "area_policy": "优先采用用户明确提供的设施面积；缺少明确面积时按配置的面积口径估算；空间不足必须报告，不得静默缩小设施。",
+  "excluded_this_round": [
+    "sand_and_aggregate_yard",
+    "tower_crane_coverage",
+    "construction_hoist_planning"
+  ],
+  "limits": [
+    "建筑占地必须取采用场界内的轮廓并集，嵌套和重叠轮廓不得重复计入面积。",
+    "各项比例不自动归一化为100%；预算差异或容量冲突应明确记录，不得偷偷调整比例。",
+    "面积预算充足不代表几何上一定放得下，也不代表出入口和道路已经连通。",
+    "主轴、场界与每个原生坐标单位对应的米数由调用方依据空间证据选定，不应写成本项目专属常量。",
+    "待定避让区不等于已确认建筑；与建筑重叠的部分应扣除，新增保护面积与实际建筑占地分开统计。"
+  ],
+  "planning": {
+    "grid_step_m": 5.0,
+    "road_grid_step_m": 5.0,
+    "site_edge_clearance_m": 1.0,
+    "obstacle_clearance_m": 1.0,
+    "frontage_max_gap_m": 7.0,
+    "candidate_budget": 180000,
+    "aspect_ratio_samples": 7,
+    "placement_order_trials": 3,
+    "uncertain_keepouts": "major_non_annotation",
+    "uncertain_excluded_layer_patterns": [
+      "^RD[-_]",
+      "道路",
+      "植物",
+      "绿地",
+      "停车",
+      "^CAR$",
+      "PUB[-_]?TAB",
+      "ASSIST",
+      "KZD"
+    ],
+    "access_candidate_limit": 12
+  },
+  "planning_source": "本轮采用的研究搜索参数，不代表施工规范要求。"
+}

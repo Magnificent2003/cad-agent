@@ -7,7 +7,7 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true, timeout: 0, proxyTimeout: 0 },
+      '/api': { target: process.env.CAD_API_BASE_URL || 'http://127.0.0.1:8000', changeOrigin: true, timeout: 0, proxyTimeout: 0 },
     },
   },
 })

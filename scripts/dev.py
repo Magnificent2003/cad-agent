@@ -45,7 +45,14 @@ class RPCTransport(xmlrpc.client.Transport):
 def freecad_ready(port=9875):
     try:
         with xmlrpc.client.ServerProxy(f"http://127.0.0.1:{port}", transport=RPCTransport()) as rpc:
-            return rpc.ping() is True
+            report = rpc.get_rpc_status()
+            dispatch = report.get("gui_dispatch", {})
+            if dispatch.get("state") == "blocked":
+                raise RuntimeError(
+                    f"FreeCAD 被弹窗阻塞：{dispatch.get('modal_title', '未命名弹窗')}。"
+                    "请先在 FreeCAD 窗口处理该弹窗；尚未启动智能体。"
+                )
+            return report.get("success") is True and dispatch.get("state") == "healthy"
     except (OSError, xmlrpc.client.Error):
         return False
 
@@ -91,7 +98,7 @@ def run_services(services, env, on_ready):
             child_env = dict(env)
             if service.name in {"网页", "FreeCAD"}:
                 for key in tuple(child_env):
-                    if key.startswith("DEEPSEEK_") or key in {"CAD_INTERNAL_TOKEN", "AGENT_SERVER_PASSWORD", "OPENCODE_SERVER_PASSWORD"}:
+                    if key.startswith(("DEEPSEEK_", "AIAPI_")) or key in {"CAD_INTERNAL_TOKEN", "AGENT_SERVER_PASSWORD", "OPENCODE_SERVER_PASSWORD"}:
                         child_env.pop(key)
             log = None
             try:
@@ -188,12 +195,18 @@ def main():
                 reclaim_port(service.host, service.port, service.name, project_root=ROOT,
                              emit=lambda message: print(message, flush=True))
             except UnownedPortError:
-                if service.name != "FreeCAD":
+                if service.name not in {"FreeCAD", "业务后端"}:
                     raise
                 original = service.port
                 service.port = available_alternative(service.host, original, {s.port for s in services})
-                print(f"FreeCAD 端口 {original} 的占用无法定位，本次改用 {service.port}；已同步后端与 MCP。", flush=True)
+                if service.name == "业务后端":
+                    port_argument = service.command.index("--port") + 1
+                    service.command[port_argument] = str(service.port)
+                    host = f"[{service.host}]" if ":" in service.host else service.host
+                    api = urlsplit(f"http://{host}:{service.port}")
+                print(f"{service.name} 端口 {original} 的占用无法定位，本次改用 {service.port}；已同步相关服务。", flush=True)
         env["FREECAD_RPC_PORT"] = str(services[0].port)
+        env["CAD_API_BASE_URL"] = api.geturl()
         subprocess.run(["bash", "freecad/install_python.sh", "--check"], cwd=ROOT, env=env, check=True)
         subprocess.run([python, "-m", "agent.launcher", "--check"], cwd=ROOT, env=env, check=True)
         run_services(services, env, on_ready)

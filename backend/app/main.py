@@ -29,6 +29,8 @@ async def agent_events(app):
                 session_id = event_session_id(event)
                 if not session_id or not state.store.one("SELECT id FROM sessions WHERE id=?", (session_id,)):
                     continue
+                # Persist original tool payloads before the web UI condenses them.
+                state.file_tasks.observe(event, session_id)
                 kind = event.get("type")
                 if kind in {"session.status", "session.idle", "session.error"}:
                     status = (event.get("properties", {}).get("status") or {}).get("type")

@@ -108,30 +108,103 @@ def cad_inspect(
 
 
 @mcp.tool(structured_output=False)
+def cad_spatial_facts(
+    context_path: str = "", path: str = "", boundary_id: str = "", facts_id: str = "",
+    category: str = "", ids: list[str] | None = None, offset: int = 0, limit: int = 15,
+    section: str = "outlines",
+) -> list[TextContent | ImageContent]:
+    """从当前DXF识别场界候选内的空间占地：命名建筑、保留候选、从属重复、待定和非建筑。
+
+    本工具直接只读DXF，无需打开FreeCAD图形界面；不使用项目人工确认文件或既有布局。
+    首次调用省略path使用当前输入；
+    多场界时可用图内boundary_id选择分析范围，该选择不确认法定红线。
+    返回本轮facts_id、证据和分类摘要。重复查询用facts_id；category筛选类别，
+    ids指定源实例编号时返回原生坐标，offset/limit分页；显示页可能因字节预算缩短，
+    按next_offset继续。极大单个几何会说明省略及完整事实位置，不静默丢弃。section=issues查询问题明细，
+    默认section=outlines查询轮廓。不要同时指定facts_id和path。
+    单位、身份或方向证据不足会明确返回问题，不以模型空间空白推断可用空地。
+    施工主轴、局部米坐标与候选占地核查由cad_spatial_constraints接收同一facts_id计算。
+    context_path由当前会话自动绑定，无需模型填写；不写CAD、不自动布置全场。
+    """
+    return run_site_tool("spatial_facts", context_path, {
+        "path": path, "boundary_id": boundary_id, "facts_id": facts_id, "category": category,
+        "ids": ids, "offset": offset, "limit": limit, "section": section,
+    })
+
+
+@mcp.tool(structured_output=False)
+def cad_spatial_constraints(
+    facts_id: str = "", context_path: str = "", proposals: list[dict] | None = None,
+    obstacle_offset: int = 0, obstacle_limit: int = 12,
+    report_id: str = "", proposal_id: str = "", offset: int = 0, limit: int = 15,
+) -> list[TextContent | ImageContent]:
+    """计算当前图纸的施工参照轴及候选占地约束，不画道路或自动布置整图。
+
+    首次传cad_spatial_facts返回的facts_id；不传proposals时获取单位、主轴、
+    局部米制框架和占地摘要。obstacle_offset为非负偏移，obstacle_limit为1～30；两者仅控制摘要页，
+    全部独立占地始终参与计算，不依赖FreeCAD图形界面。
+    proposals最多50项：{id,name,role:'facility'|'road'|'coverage',
+    position_m:[局部x,局部y],width_m,depth_m,angle_deg:局部角度,clearance_m:净距}；
+    position_m是旋转前矩形左下角，兼作旋转锚点，不是中心；angle_deg围绕该点逆时针旋转。
+    或用vertices_m提供完整多边形。检查全轮廓越界、交叠、完全包含、净距及轴角偏差。
+    返回placement.anchor_m、实际centroid_m/centroid_wcs；矩形corner_points_wcs为含闭合末点的5个角点。
+    measurements给出实际越界面积、距场界净距、轴角误差及两类轮廓的最近对象和距离。
+    报告坐标、角点、净距直接引用这些回传值，不自行口算或调用GUI再次换算；不能把anchor说成中心。
+    一次提交的列表表示同时存在的设施，会检查相互碰撞；同一设施的互斥备选位置须分别检查，
+    不能因备选方案彼此相交就认定该位置撞了已有设施。默认返回report_id、全部候选状态和问题计数、
+    少量问题样本；完整结果落盘，不因输出摘要而减少检查。
+    查看明细时只传report_id，可选proposal_id定位一个候选，再用offset/limit按记录分页；
+    使用返回的next_offset继续，显示页可能因字节预算缩短。无proposal_id时读取全报告。
+    超长单项返回json_text_fragment，按相同path和fragment_index拼接text后解析。
+    读取报告不会累计候选，也不会重新计算。修改多个候选后必须用facts_id提交当前完整集合；
+    单独提交新增项不会检查未提交的旧候选。也可保存CAD后重新提取A；改图会使旧facts/report失效。
+    coverage不作为实体占地，也不表示已经验算吊装覆盖；证据采用与单位冲突明确记录，
+    不伪称人工确认。无冲突不等于规范验收或文件已生成，不能替代保存后cad_review。
+    context_path由当前会话自动绑定，无需模型填写。
+    """
+    return run_site_tool("spatial_constraints", context_path, {
+        "facts_id": facts_id, "proposals": proposals,
+        "obstacle_offset": obstacle_offset, "obstacle_limit": obstacle_limit,
+        "report_id": report_id, "proposal_id": proposal_id, "offset": offset, "limit": limit,
+    })
+
+
+@mcp.tool(structured_output=False)
+def cad_site_rules(
+    context_path: str = "", facts_id: str = "", overrides: dict | None = None,
+) -> list[TextContent | ImageContent]:
+    """读取中文施工场布规则；传当前facts_id可计算同图面积任务书，不布置或写CAD。
+
+    缺少用户明确面积时，以当前候选场界面积按配置估算道路及六类设施：钢筋、模板、
+    周转材料、砌块/装修、办公、设备。无砂石、塔吊或提升设备的默认布置。
+    比例和路宽为可调整研究假设，不是规范。配置为cad_domain/site_layout_rules.yaml。
+    overrides可给{facilities:{设施id:{area_m2:平方米}}}、road:{width_m:米}等通用覆盖，
+    调整须来自当前任务或说明采用理由，不能隐瞒面积缺额。返回面积预算和保留/主要待定
+    占地的并集量测，不把未分类区域当空地。无需模型读取项目文件或记忆历史布局。
+    布置位置、分区和道路仍由模型决定，用空间约束及实际成果复核验证。
+    """
+    return run_site_tool("site_rules", context_path, {"facts_id": facts_id, "overrides": overrides})
+
+
+@mcp.tool(structured_output=False)
 def cad_layout(
     context_path: str = "", source: str = "", target: str = "",
     facts: dict | None = None, components: list[dict] | None = None,
 ) -> list[TextContent | ImageContent]:
-    """Create a constrained 2D DXF candidate from explicit, evidenced scene facts.
+    """按模型给出的设施/道路位置写入可编辑DXF，修改后必须cad_review检查实际文件。
 
-    source is an authorized input/work file; target is a current-task output DXF.
-    facts.source_sha256 always binds the original task input baseline.
-    facts schema: {source_sha256: hex, units: {status: 'confirmed',
-    metres_per_unit: number, evidence: string, override_header?: true},
-    boundary: {status: 'confirmed', handles: [exactHandle], evidence: string},
-    obstacles: {status: 'confirmed', handles: [exactHandle, ...], evidence: string},
-    frame?: {origin: [drawingX, drawingY], angle_deg: number}, clearance_m?: number}.
-    An empty confirmed obstacle list requires evidence. Do not infer units from
-    paper scale or silently promote inspect candidates to confirmed facts.
-
-    components schema: [{id: string, name: string, kind: 'rectangle'|'road',
-    width_m: number, depth_m?: number, position_m?: [localMetresX, localMetresY],
-    angle_deg?: number, points_m?: [[localMetresX, localMetresY], ...],
-    operation?: 'add'|'move'|'remove', handle?: exactHandle}]. A move/remove must
-    identify its exact existing handle. The worker supports reliable 2D geometry,
-    writes a candidate only when known-fact and geometry checks pass, and persists
-    its review contract. It does not certify a complete scene or code compliance.
-    Use execute_code when this helper is insufficient; review its edited DXF too.
+    新空间事实格式：facts={schema:'spatial-evidence/1',facts_id:当前原始输入的事实编号,
+    adopted_by:'agent',assumptions:[采用工作单位/场界/暂定占地的中文依据],clearance_m:净距}。
+    该约定保留机器证据身份，不需要伪造人工confirmed；从原图解析块内实例，暂避主要待定。
+    source省略为本轮输入；target为本轮输出或scratch的新DXF，不覆盖输入或source。
+    不含自动整图规划，模型须明确每项位置。components列表：
+    矩形{id,name,kind:'rectangle',width_m,depth_m,position_m:[局部左下角x,y],angle_deg:局部角度}；
+    道路{id,name,kind:'road',width_m,points_m:[[局部中心线x,y],...]}。
+    所有尺寸和局部位置为米，通过证据框架映回原CAD，不旋转底图。操作支持add/move/remove，
+    move/remove要匹配唯一id或handle。多次编辑source可为上次已保存成果，facts仍绑定原始输入。
+    道路完整宽度走廊也参加越界/占地检查，主轴正交；不能把仅检查中心线当道路可行。
+    未通过时不发布新文件，读具体冲突调整后再试；通过表示机器事实下的几何检查，不是规范验收。
+    旧source_sha256+confirmed+原生handles事实格式仍支持，不可把两套字段拼接或降级复核。
     """
     return run_site_tool("layout", context_path, {
         "source": source, "target": target, "facts": facts, "components": components,
@@ -144,26 +217,18 @@ def cad_review(
     facts: dict | None = None, components: list[dict] | None = None,
     allowed_changes: list[str] | None = None, render: bool = True,
 ) -> list[TextContent | ImageContent]:
-    """Reopen an actual output DXF and bind its checks and preview to its file hash.
+    """回读实际保存的DXF，检查本次几何和原图保留，并提供同源PNG反馈。
 
-    path must name a current-task output DXF, including one made by execute_code.
-    general checks baseline preservation; allowed_changes explicitly lists exact
-    baseline handles permitted to change/remove, not layer names or wildcards.
-    site_layout uses cad_layout's facts schema. Review components are manifests
-    of actual entities: [{id: string, role: 'facility'|'road', handle: exactHandle,
-    width_m?: number, depth_m?: number, label_handle?: exactHandle}]. These differ
-    from cad_layout's rectangle/road planning specs. Layout normally saves this
-    manifest automatically; omitted facts/components reuse its saved contract.
-    Custom Python geometry needs explicit role/handle declarations. Nonoccupying
-    annotations or coverage entities may be declared with role 'annotation' or
-    'coverage' and an exact handle; never exempt actual occupied geometry.
-    The review checks the declared 2D boundary, obstacles, clearances and actual
-    component geometry. A tagged site output cannot downgrade to general review.
-    Missing facts remain unknown; a passing review is not full code compliance.
-    render=True returns a PNG when available; inspect both report and actual-file
-    image before delivery. A later edit invalidates this file's earlier review.
-    The backend independently rechecks modified DXFs before publication; read-only
-    answers and non-CAD reports do not need this tool. context_path is task-bound.
+    场布使用profile='site_layout'。cad_layout保存了事实与实体清单时可只传path和render=True。
+    自主Python写图时提供同样的spatial-evidence/1 facts及实际实体清单components：
+    [{id,role:'facility'|'road',handle:实际新增实体句柄,width_m,depth_m:矩形深度,label_handle:可选}]。
+    清单不是计划坐标，检查器从保存DXF量测，所有新增占地都需申报。纯标注/覆盖声明role=annotation
+    或coverage和实际句柄，不得将占地设施标作标注绕过检查。
+    新事实保留机器推定/工作假设，检查通过也不证明施工规范、全部建筑已识别或空地完全可靠。
+    普通编辑可用general和allowed_changes列出准许修改/删除的原生handle；场布不能降级general。
+    原图、检查、图片按文件哈希绑定，后续改图需要重查。render=True后必须读取报告并查看预览；
+    图片发送不代表模型看懂，图片不可用应说明。后端发布前还独立回读；纯分析无需创建文件复核。
+    context_path由当前会话绑定，path在本轮输出或scratch范围。最后只交付本轮output内的最终文件。
     """
     return run_site_tool("review", context_path, {
         "path": path, "profile": profile, "facts": facts, "components": components,

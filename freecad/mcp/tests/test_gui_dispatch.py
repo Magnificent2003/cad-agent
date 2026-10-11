@@ -327,3 +327,51 @@ def test_queue_deadline_includes_time_spent_waking_gui() -> None:
         assert elapsed < 0.5
         dispatch.process_gui_tasks(reschedule=False)
         assert not ran.is_set()
+
+
+def test_modal_cancels_queued_write_and_does_not_replay_after_close(monkeypatch) -> None:
+    with load_gui_dispatch() as dispatch:
+        modal = types.SimpleNamespace(
+            windowTitle=lambda: 'Document Recovery',
+            metaObject=lambda: types.SimpleNamespace(className=lambda: 'QDialog'),
+        )
+        monkeypatch.setattr(FakeApplication, 'activeModalWidget', staticmethod(lambda: modal))
+        waker = ThreadedWaker(dispatch)
+        dispatch._waker = waker
+        ran = threading.Event()
+        before = time.monotonic()
+        result = dispatch.dispatch_to_gui(ran.set, timeout=900, operation_name='delete_entities')
+        assert time.monotonic() - before < 1
+        assert result['code'] == 'GUI_MODAL_BLOCKED'
+        assert result['cancelled'] and not result['operation_started']
+        assert dispatch.get_dispatch_status()['modal_title'] == 'Document Recovery'
+        modal = None
+        dispatch.process_gui_tasks(reschedule=False)
+        assert not ran.is_set()
+        assert dispatch.dispatch_to_gui(lambda: 'resumed', timeout=1) == 'resumed'
+        waker.join()
+
+
+def test_modal_opened_by_running_task_reports_uncertain_completion() -> None:
+    with load_gui_dispatch() as dispatch:
+        waker = ThreadedWaker(dispatch)
+        dispatch._waker = waker
+        release = threading.Event()
+
+        def operation():
+            dispatch._dispatch_health.set_modal('Import options', 'QDialog')
+            release.wait(2)
+            dispatch._dispatch_health.set_modal(None)
+            return 'continued after dialog closed'
+
+        try:
+            before = time.monotonic()
+            result = dispatch.dispatch_to_gui(operation, timeout=900)
+            assert time.monotonic() - before < 1
+            assert result['code'] == 'GUI_MODAL_BLOCKED'
+            assert result['operation_started'] and not result['cancelled']
+            assert 'inspect its result before retrying writes' in result['error']
+        finally:
+            release.set()
+            waker.join()
+        assert dispatch.get_dispatch_status()['state'] == 'healthy'

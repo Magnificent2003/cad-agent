@@ -142,7 +142,11 @@ def test_cleanup_finishes_after_repeated_interrupts_and_restores_handlers(monkey
             process.wait(timeout=3)
 
 
-def test_freecad_fallback_is_shared_with_every_service(tmp_path, monkeypatch):
+@pytest.mark.parametrize('blocked,alternative,expected_ports', [
+    ('FreeCAD', 9876, [9876, 8000, 4096, 5173]),
+    ('业务后端', 8001, [9875, 8001, 4096, 5173]),
+])
+def test_fallback_is_shared_with_every_service(tmp_path, monkeypatch, blocked, alternative, expected_ports):
     application = tmp_path / "freecad/runtime/squashfs-root/AppRun"
     application.parent.mkdir(parents=True)
     application.touch()
@@ -153,14 +157,16 @@ def test_freecad_fallback_is_shared_with_every_service(tmp_path, monkeypatch):
     monkeypatch.setattr(dev.subprocess, "run", lambda *a, **kw: None)
 
     def reclaim(host, port, name, **kwargs):
-        if name == "FreeCAD":
+        if name == blocked:
             raise dev.UnownedPortError("unidentified bind conflict")
 
     monkeypatch.setattr(dev, "reclaim_port", reclaim)
-    monkeypatch.setattr(dev, "available_alternative", lambda *args: 9876)
+    monkeypatch.setattr(dev, "available_alternative", lambda *args: alternative)
     launched = []
     monkeypatch.setattr(dev, "run_services", lambda services, env, ready: launched.append((services, env)))
     assert dev.main() == 0
     services, env = launched[0]
-    assert [s.port for s in services] == [9876, 8000, 4096, 5173]
-    assert env["FREECAD_RPC_PORT"] == "9876"
+    assert [s.port for s in services] == expected_ports
+    assert env["FREECAD_RPC_PORT"] == str(expected_ports[0])
+    assert env["CAD_API_BASE_URL"] == f"http://127.0.0.1:{expected_ports[1]}"
+    assert services[1].command[services[1].command.index('--port') + 1] == str(expected_ports[1])

@@ -15,6 +15,13 @@ def run(request: dict) -> dict:
     params = request.get('params') or {}
     baseline = baseline_file(context)
     action = request.get('action')
+    if action == 'site_rules':
+        from .spatial_program import site_rules
+        return {'result': site_rules(context, params)}
+    if action in {'spatial_facts', 'spatial_constraints'}:
+        from .spatial_tools import inspect_spatial, query_constraints
+        handler = inspect_spatial if action == 'spatial_facts' else query_constraints
+        return {'result': handler(context, params)}
     if action == 'feedback':
         path = resolve_file(context, params['path'])
         mark_feedback(context, path, params, image_sha256=params['preview']['image_sha256'])
@@ -31,8 +38,8 @@ def run(request: dict) -> dict:
         contract = load_contract(context)
         facts = params.get('facts') or contract.get('site_facts')
         if facts is None:
-            raise ValueError('先通过 cad_inspect 获取证据并提供已确认的 facts；不能猜测单位、红线和空地。')
-        result = build_layout(str(source), str(target), facts=facts, components=params.get('components') or [], baseline=str(baseline))
+            raise ValueError('先通过 cad_spatial_facts 获取当前输入证据，并提供 spatial-evidence/1 采用约定；不能猜测单位、场界和空地。')
+        result = build_layout(str(source), str(target), facts=facts, components=params.get('components') or [], baseline=str(baseline), context=context)
         if result.get('status') == 'passed':
             source_entry = entry_for(context, source)
             register(context, target, profile='site_layout', facts=facts, components=result.get('components'),

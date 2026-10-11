@@ -8,7 +8,7 @@ no bounding box, convex hull, or point sampling substitutes for occupied geometr
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import io
 import json
@@ -23,6 +23,8 @@ from ezdxf.math import Vec2, Vec3
 from shapely.affinity import translate
 from shapely.geometry import LineString, Polygon, mapping
 from shapely.ops import nearest_points
+
+from .tolerances import AREA_TOLERANCE_M2, AXIS_TOLERANCE_DEG, LINEAR_TOLERANCE_M
 
 APPID = "CAD_AGENT_SITE"
 # INSUNITS is a declaration, never independent verification of drawing scale.
@@ -47,6 +49,8 @@ class Site:
     source_sha256: str
     clearance_m: float = 0.0
     boundary_handles: tuple[str, ...] = ()
+    reference_mode: str = "legacy_handles"
+    evidence: dict = field(default_factory=dict)
 
 
 class FactsError(ValueError):
@@ -257,8 +261,11 @@ def _site(doc, source_sha256, facts):
     return Site(boundary, obstacles, scale, origin, angle, source_sha256, clearance, tuple(boundary_handles))
 
 
-def load_site(source: str | Path, facts: dict) -> Site:
-    """Resolve explicit confirmed facts against their immutable baseline DXF."""
+def load_site(source: str | Path, facts: dict, *, context=None) -> Site:
+    """Resolve either legacy confirmation or task-bound machine spatial evidence."""
+    from .spatial_delivery import is_spatial_evidence, resolve_spatial_site
+    if is_spatial_evidence(facts):
+        return resolve_spatial_site(context, source, facts)
     doc, source_sha256 = _read(source)
     return _site(doc, source_sha256, facts)
 
@@ -554,12 +561,16 @@ def occupied_polygon(doc, handle: str, component: dict | None = None) -> Polygon
     return _polygon(entity)
 
 
-def check_dxf(source, target, *, profile="general", facts=None, components=None, allowed_changes=None) -> dict:
+def check_dxf(source, target, *, profile="general", facts=None, components=None, allowed_changes=None, context=None) -> dict:
     """Reread actual DXFs and return a hash-bound preservation/geometry report.
 
     'passed' concerns only the named checks. No construction-code or engineering
     compliance is inferred. Unsupported spatial geometry produces 'unknown'.
     """
+    from .spatial_delivery import is_spatial_evidence, verify_spatial_references
+    machine_evidence = is_spatial_evidence(facts)
+    if machine_evidence:
+        profile = "site_layout"
     report: dict[str, Any] = {"status": "passed", "profile": profile, "source_sha256": None, "file_sha256": None, "issues": [], "checks": {}, "scope": "Native preservation and supported 2D geometry only; construction norms are not tested."}
 
     def issue(code, message, handles=(), *, status="failed", **details):
@@ -601,6 +612,10 @@ def check_dxf(source, target, *, profile="general", facts=None, components=None,
         issue("invalid_allowed_changes", "allowed_changes must be an explicit list of original entity handles.")
         allowed_changes = []
     allowed = {h.upper() for h in allowed_changes}
+    if machine_evidence:
+        # New layout entities may be revised; original baseline objects cannot
+        # be exempted by a model-provided list of allowed handles.
+        allowed = set()
     before, after = _snapshots(original), _snapshots(current)
     changed = [h for h, value in before.items() if after.get(h) != value]
     for handle in changed:
@@ -616,24 +631,38 @@ def check_dxf(source, target, *, profile="general", facts=None, components=None,
         return report
     site = None
     try:
-        site = _site(original, report["source_sha256"], facts)
-    except FactsError as exc:
-        issue(exc.code, str(exc), status=exc.status)
-        report["checks"]["site_facts"] = exc.status
+        site = load_site(source, facts, context=context)
+        if site.source_sha256 != report["source_sha256"]:
+            raise FactsError("验证期间基准图纸版本改变。", "stale_facts", "failed")
+    except (FactsError, ValueError, OSError, KeyError, RuntimeError) as exc:
+        status = getattr(exc, "status", "failed")
+        issue(getattr(exc, "code", "spatial_evidence_invalid"), str(exc), status=status)
+        report["checks"]["site_facts"] = status
         report["checks"]["site_dependent_geometry"] = "skipped_unconfirmed_facts"
     else:
         report["checks"]["site_facts"] = "passed"
         report["checks"]["site_dependent_geometry"] = "evaluated"
+        if machine_evidence:
+            report["spatial_evidence"] = site.evidence
+            report["scope"] = site.evidence["scope"]
     # Protect the referenced polygon AND all native dependencies of its INSERT.
     protected = [*site.boundary_handles, *(h for h, _ in site.obstacles)] if site is not None else []
-    for handle in protected:
+    if site is not None and machine_evidence:
         try:
-            geometry = entity_polygon(current, handle)
-            baseline = entity_polygon(original, handle)
-            if before.get(handle) != after.get(handle) or not geometry.equals_exact(baseline, 0):
-                issue("site_reference_changed", "A confirmed boundary or obstacle changed in the target.", [handle])
-        except ValueError as exc:
-            issue("site_reference_changed", str(exc), [handle])
+            for failure in verify_spatial_references(target, site):
+                issue(failure["code"], failure["message"], failure["handles"],
+                      **{key: value for key, value in failure.items() if key not in {"code", "message", "handles"}})
+        except (ValueError, OSError, ezdxf.DXFError) as exc:
+            issue("site_reference_changed", str(exc))
+    else:
+        for handle in protected:
+            try:
+                geometry = entity_polygon(current, handle)
+                baseline = entity_polygon(original, handle)
+                if before.get(handle) != after.get(handle) or not geometry.equals_exact(baseline, 0):
+                    issue("site_reference_changed", "A confirmed boundary or obstacle changed in the target.", [handle])
+            except ValueError as exc:
+                issue("site_reference_changed", str(exc), [handle])
     discovered = []
     metadata = {}
     for entity in current.modelspace():
@@ -660,7 +689,16 @@ def check_dxf(source, target, *, profile="general", facts=None, components=None,
         role = component.get("role")
         if role in {"annotation", "coverage"}:
             entity = current.entitydb.get(handle)
-            if entity is not None and (role == "coverage" or entity.dxftype() in ANNOTATIONS):
+            permitted = entity is not None and (role == "coverage" or entity.dxftype() in ANNOTATIONS)
+            if machine_evidence and role == "coverage":
+                permitted = entity is not None and entity.dxftype() == "CIRCLE" and handle in model_handles
+                if permitted:
+                    try:
+                        _planar(entity)
+                        _number(entity.dxf.radius, "coverage radius", positive=True)
+                    except ValueError:
+                        permitted = False
+            if permitted:
                 registered.add(handle)
             else:
                 issue("invalid_annotation", "Annotation exemption requires an actual text entity.", [handle], status="unknown")
@@ -673,30 +711,43 @@ def check_dxf(source, target, *, profile="general", facts=None, components=None,
             issue("invalid_component_identity", "Each spatial component requires a unique nonempty id and entity handle.", [handle], status="unknown")
             continue
         ids.add(component_id)
+        if machine_evidence and handle in before:
+            issue("baseline_as_component", "原图实体不能伪装为本轮新增设施。", [handle])
         spatial_registered.add(handle)
         registered.add(handle)
         entity = current.entitydb.get(handle)
         if entity is None or handle not in model_handles:
-            if component.get("required", True):
+            if machine_evidence or component.get("required", True):
                 issue("missing_component", "A required registered component is missing from modelspace.", [handle])
             continue
+        if machine_evidence and handle in metadata and metadata[handle].get("role") != role:
+            issue("component_role_mismatch", "实际实体标记角色与申报清单不同，不能通过换角色绕过占地检查。", [handle])
         try:
             if role == "road":
                 representation = component.get("kind", component.get("geometry_kind", component.get("representation")))
                 if entity.dxftype() == "LWPOLYLINE" and representation != "corridor" and entity.dxf.get("const_width", 0) <= 0:
                     issue("road_zero_width", "The actual road has no positive constant DXF width, independently of its claimed width.", [handle], measured=entity.dxf.get("const_width", 0), measurement_units="drawing_units", required="positive constant width", **_entity_location(entity))
                 polygon, width = _road_geometry(entity, component)
+                if machine_evidence and site is not None:
+                    points = list(polygon.exterior.coords) if representation == "corridor" else list(entity.vertices_in_wcs())
+                    errors = []
+                    for a, b in zip(points, points[1:]):
+                        bearing = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+                        deviation = (bearing - site.angle_deg) % 90
+                        errors.append(min(deviation, 90 - deviation))
+                    if errors and max(errors) > AXIS_TOLERANCE_DEG:
+                        issue("road_axis_unmet", "实际道路未按工作主轴及其正交方向布置。", [handle], measured_deg=max(errors), maximum_deg=AXIS_TOLERANCE_DEG)
                 if "width_m" in component and site is not None:
                     required = _number(component["width_m"], "required road width_m", positive=True)
                     measured = width * site.metres_per_unit
-                    if measured + EPS < required:
+                    if measured + LINEAR_TOLERANCE_M < required:
                         issue("road_width_unmet", "Actual road width is below its requirement.", [handle], location=_location(polygon), measured=measured, required=required)
             else:
                 polygon = _polygon(entity)
                 if site is not None and ("width_m" in component or "depth_m" in component):
                     requirements = [_number(component[k], k, positive=True) for k in ("width_m", "depth_m") if k in component]
                     measured = [x * site.metres_per_unit for x in _rectangle_dimensions(polygon)]
-                    if (len(requirements) == 2 and any(a + EPS < b for a, b in zip(measured, sorted(requirements)))) or (len(requirements) == 1 and max(measured) + EPS < requirements[0]):
+                    if (len(requirements) == 2 and any(a + LINEAR_TOLERANCE_M < b for a, b in zip(measured, sorted(requirements)))) or (len(requirements) == 1 and max(measured) + LINEAR_TOLERANCE_M < requirements[0]):
                         issue("facility_dimensions_unmet", "Actual facility footprint does not meet its required dimensions.", [handle], location=_location(polygon), measured=measured, required=sorted(requirements))
         except (ValueError, ezdxf.DXFError) as exc:
             text = str(exc)
@@ -705,20 +756,20 @@ def check_dxf(source, target, *, profile="general", facts=None, components=None,
             continue
         occupied.append((handle, role, polygon))
         if site is not None:
-            if not site.boundary.covers(polygon):
-                issue("outside_boundary", "Complete occupied geometry extends outside the confirmed boundary.", [handle, *site.boundary_handles], location=_location(polygon.difference(site.boundary)))
-            elif site.clearance_m and polygon.distance(site.boundary.boundary) * site.metres_per_unit + EPS < site.clearance_m:
+            if polygon.difference(site.boundary).area * site.metres_per_unit ** 2 > AREA_TOLERANCE_M2:
+                issue("outside_boundary", "完整占地超出采用的工作场界。" if machine_evidence else "Complete occupied geometry extends outside the confirmed boundary.", [handle, *site.boundary_handles], location=_location(polygon.difference(site.boundary)))
+            elif site.clearance_m and polygon.distance(site.boundary.boundary) * site.metres_per_unit + LINEAR_TOLERANCE_M < site.clearance_m:
                 issue("boundary_clearance_unmet", "Occupied geometry is too close to the confirmed boundary.", [handle, *site.boundary_handles], location=_location(polygon, site.boundary.boundary), measured=polygon.distance(site.boundary.boundary) * site.metres_per_unit, required=site.clearance_m)
             for obstacle_handle, obstacle in site.obstacles:
-                if polygon.intersection(obstacle).area > 0:
-                    issue("obstacle_collision", "Occupied geometry overlaps a confirmed obstacle.", [handle, obstacle_handle], location=_location(polygon, obstacle), measured=polygon.intersection(obstacle).area * site.metres_per_unit ** 2, required=0)
-                elif site.clearance_m and polygon.distance(obstacle) * site.metres_per_unit + EPS < site.clearance_m:
+                if polygon.intersection(obstacle).area * site.metres_per_unit ** 2 > AREA_TOLERANCE_M2:
+                    issue("obstacle_collision", "实际占地与机器保留轮廓或主要待定避让区重叠。" if machine_evidence else "Occupied geometry overlaps a confirmed obstacle.", [handle, obstacle_handle], location=_location(polygon, obstacle), measured=polygon.intersection(obstacle).area * site.metres_per_unit ** 2, required=0)
+                elif site.clearance_m and polygon.distance(obstacle) * site.metres_per_unit + LINEAR_TOLERANCE_M < site.clearance_m:
                     issue("obstacle_clearance_unmet", "Occupied geometry is too close to a confirmed obstacle.", [handle, obstacle_handle], location=_location(polygon, obstacle), measured=polygon.distance(obstacle) * site.metres_per_unit, required=site.clearance_m)
-        label = component.get("label_handle")
-        if label:
+        labels = [component.get("label_handle"), *component.get("legend_handles", [])]
+        for label in filter(None, labels):
             label_entity = current.entitydb.get(str(label).upper())
-            if label_entity is None or label_entity.dxftype() not in ANNOTATIONS:
-                issue("missing_component_label", "Registered component label is absent or is not a text entity.", [handle, str(label)])
+            if label_entity is None or label_entity.dxftype() not in ANNOTATIONS or str(label).upper() not in model_handles:
+                issue("missing_component_label", "Registered component label is absent or is not a modelspace text entity.", [handle, str(label)])
             else:
                 registered.add(str(label).upper())
     for index, (handle, role, polygon) in enumerate(occupied):
@@ -726,9 +777,10 @@ def check_dxf(source, target, *, profile="general", facts=None, components=None,
             if role == other_role == "road":
                 continue  # Road junctions are not facility collisions.
             overlap = polygon.intersection(other)
-            if overlap.area > 0:
+            area_scale = site.metres_per_unit ** 2 if site is not None else 1
+            if overlap.area * area_scale > (AREA_TOLERANCE_M2 if site is not None else 0):
                 issue("component_collision", "Registered occupied geometries overlap.", [handle, other_handle], location=_location(overlap), measured=overlap.area * (site.metres_per_unit ** 2 if site is not None else 1), measurement_units="m2" if site is not None else "drawing_units2", required=0)
-            elif site is not None and site.clearance_m and polygon.distance(other) * site.metres_per_unit + EPS < site.clearance_m:
+            elif site is not None and site.clearance_m and polygon.distance(other) * site.metres_per_unit + LINEAR_TOLERANCE_M < site.clearance_m:
                 issue("component_clearance_unmet", "Registered occupied geometries violate minimum clearance.", [handle, other_handle], location=_location(polygon, other), measured=polygon.distance(other) * site.metres_per_unit, required=site.clearance_m)
     for entity in current.modelspace():
         handle = entity.dxf.handle
@@ -736,12 +788,14 @@ def check_dxf(source, target, *, profile="general", facts=None, components=None,
         if declared.get("role") in {"facility", "road"} and handle not in spatial_registered:
             issue("unregistered_spatial_component", "A current tagged facility or road was omitted from the explicit component registry; its occupancy remains unverified.", [handle], status="unknown")
             continue
-        if handle in before or handle in registered or entity.dxftype() in ANNOTATIONS:
+        if handle in before or handle in registered or (entity.dxftype() in ANNOTATIONS and not machine_evidence):
             continue
-        if declared.get("role") == "coverage":
+        if declared.get("role") == "coverage" and not machine_evidence:
             continue
         issue("unregistered_spatial_entity", "A new spatial entity has no registered facility/road role or explicit coverage role; its occupancy is unverified.", [handle], status="unknown")
-    if not ids and not explicit_empty_registry:
+    if not ids and (machine_evidence or not explicit_empty_registry):
         issue("no_spatial_components", "No facility or road components were registered for site validation.", status="unknown")
-    report["checks"]["site_geometry"] = {"status": report["status"], "registered_components": len(ids), "validated_occupied_components": len(occupied), "clearance_m": site.clearance_m if site is not None else None, "construction_norms": "not_tested", "road_to_road_junctions": "allowed"}
+    if digest(source) != report["source_sha256"] or digest(target) != report["file_sha256"]:
+        issue("file_changed_during_check", "图纸在检查期间发生变化，必须重新检查。")
+    report["checks"]["site_geometry"] = {"status": report["status"], "registered_components": len(ids), "validated_occupied_components": len(occupied), "clearance_m": site.clearance_m if site is not None else None, "construction_norms": "not_tested", "road_to_road_junctions": "allowed", "facility_program_completeness": "not_tested", "road_network_connectivity": "not_tested", "tower_coverage": "not_tested", "tolerances": {"linear_m": LINEAR_TOLERANCE_M, "area_m2": AREA_TOLERANCE_M2, "axis_deg": AXIS_TOLERANCE_DEG}}
     return report

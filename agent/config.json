@@ -48,6 +48,35 @@
           }
         }
       }
+    },
+    "aiapi-cad": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "AIAPI CAD",
+      "options": {
+        "baseURL": "{env:AIAPI_BASE_URL}",
+        "apiKey": "{env:AIAPI_API_KEY}"
+      },
+      "models": {
+        "gpt-6.1-sol": {
+          "name": "AIAPI configured model",
+          "attachment": true,
+          "tool_call": true,
+          "reasoning": true,
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 128000,
+            "output": 32000
+          }
+        }
+      }
     }
   },
   "mcp": {
@@ -63,6 +92,15 @@
   },
   "permission": {
     "*": "deny",
-    "freecad_*": "allow"
+    "freecad_*": "allow",
+    "skill": {
+      "*": "deny",
+      "site-layout": "allow"
+    }
+  },
+  "skills": {
+    "paths": [
+      "./skills"
+    ]
   }
 }

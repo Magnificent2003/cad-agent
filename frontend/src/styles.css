@@ -674,6 +674,99 @@ select {
 .tool-part[open] summary > svg:last-child {
   transform: rotate(90deg);
 }
+.execution-trace {
+  margin: 4px 0 16px;
+  border: 1px solid #e0e7f2;
+  border-radius: 10px;
+  background: #f8faff;
+  overflow: hidden;
+}
+.execution-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 0;
+  background: transparent;
+  color: #45608f;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+}
+.execution-toggle strong {
+  white-space: nowrap;
+  font-weight: 600;
+}
+.execution-toggle > span {
+  flex: 1;
+  font-size: 11px;
+  color: #717d93;
+}
+.execution-toggle > svg {
+  flex-shrink: 0;
+}
+.execution-toggle .expanded {
+  transform: rotate(90deg);
+}
+.execution-content {
+  padding: 0 12px 12px;
+  border-top: 1px solid #e7edf7;
+}
+.execution-step {
+  margin: 12px 0;
+}
+.execution-step .tool-part {
+  margin: 0;
+  background: #fff;
+  font-size: 12px;
+}
+.execution-step .tool-status {
+  font-size: 10px;
+  white-space: nowrap;
+}
+.execution-step-summary {
+  margin: 6px 10px 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #59677d;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.execution-step-error .tool-part {
+  border-color: #edcfb3;
+}
+.execution-step-error .tool-status {
+  color: #986019;
+}
+.execution-step-error .execution-step-summary {
+  color: #8b5c2a;
+}
+.tool-feedback {
+  padding: 0 10px 10px;
+}
+.tool-feedback p {
+  padding: 0;
+}
+.tool-feedback pre {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font:
+    11px/1.7 ui-monospace,
+    monospace;
+  color: #536078;
+}
+.execution-update {
+  padding: 12px 10px 0;
+}
+.execution-current {
+  margin: 14px 10px 0;
+  color: #466bac;
+  font-size: 12px;
+}
 .working-indicator,
 .chat-loading {
   display: flex;

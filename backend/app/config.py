@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     deepseek_api_key: SecretStr = SecretStr("")
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-flash"
+    llm_provider: str = "deepseek"
+    aiapi_api_key: SecretStr = SecretStr("")
+    aiapi_base_url: str = "https://aiapi.world/v1"
+    aiapi_model: str = "gpt-6.1-sol"
     freecad_rpc_port: int = Field(default=9875, ge=1, le=65535)
     cad_api_base_url: str = "http://127.0.0.1:8000"
     cad_internal_token: SecretStr = SecretStr("")

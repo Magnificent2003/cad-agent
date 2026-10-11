@@ -9,6 +9,18 @@ from PySide import QtCore
 
 component = Path(os.environ["CAD_FREECAD_ROOT"]).resolve()
 
+# FreeCAD 1.1.3 MainWindow::delayedStartup processes command-line macros before
+# consulting this preference. Set it NOW, not inside the delayed RPC callback:
+# otherwise Document Recovery enters a modal event loop before RPC starts.
+# This project-local setting only skips the startup recovery dialog. It does
+# not disable AutoSaver or delete any cached recovery files/lock files.
+FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Document").SetBool(
+    "RecoveryEnabled", False
+)
+FreeCAD.Console.PrintMessage(
+    "[MCP] Startup recovery dialog disabled for the managed profile; recovery files retained.\n"
+)
+
 
 def start_project_mcp():
     from rpc_server import rpc_server
@@ -43,6 +55,8 @@ def start_project_mcp():
         "addon_source": str(component / "mcp" / "addon" / "FreeCADMCP"),
         "rpc": message,
         "pid": os.getpid(),
+        "startup_recovery_dialog": False,
+        "recovery_files": "retained",
     }
     destination = component.parent / ".runtime" / "freecad" / "startup.json"
     destination.parent.mkdir(parents=True, exist_ok=True)

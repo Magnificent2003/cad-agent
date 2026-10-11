@@ -11,6 +11,7 @@ import uuid
 from agent.client import AgentError
 from agent.preview import PreviewUnavailable, read_preview
 from agent.session import is_internal_message, needs_continuation, terminal_assistant
+from agent.trace import TaskTrace
 from . import freecad
 from .jobs import JobConflict, drawing_root
 from .store import encode, now
@@ -29,6 +30,7 @@ class AgentTasks:
     def __init__(self, settings, store, bus, agent, jobs):
         self.settings, self.store, self.bus, self.agent, self.jobs = settings, store, bus, agent, jobs
         self.runners = {}
+        self.traces = {}
         self.poll_interval = 2
         self.timeout = 3600
         self.max_recoveries = 2
@@ -39,6 +41,20 @@ class AgentTasks:
     def root(self, task_id):
         return self.settings.data_dir / 'agent-tasks' / task_id
 
+    def trace_call(self, task_id, method, *args):
+        trace = self.traces.get(task_id)
+        if trace is not None:
+            try:
+                getattr(trace, method)(*args)
+            except Exception as exc:
+                # Observability must not interrupt an in-flight CAD mutation.
+                logger.warning('Task transcript %s failed (%s)', task_id, type(exc).__name__)
+
+    def observe(self, event, session_id):
+        for task_id, trace in self.traces.items():
+            if trace.task['session_id'] == session_id:
+                self.trace_call(task_id, 'observe', event)
+
     def active(self, session_id=None):
         sql = "SELECT * FROM agent_tasks WHERE status IN ('preparing','running','collecting','stopping')"
         return self.store.one(sql + (' AND session_id=?' if session_id else ''), (session_id,) if session_id else ())
@@ -46,6 +62,7 @@ class AgentTasks:
     def set_status(self, task_id, status, error=None):
         self.store.execute('UPDATE agent_tasks SET status=?,error=?,updated_at=? WHERE id=?', (status, error, now(), task_id))
         task = self.store.one('SELECT * FROM agent_tasks WHERE id=?', (task_id,))
+        self.trace_call(task_id, 'flush', task)
         busy = status in ACTIVE
         if not busy:
             self.clear_binding(task)
@@ -193,10 +210,24 @@ class AgentTasks:
             db.execute('UPDATE sessions SET busy=1,busy_since=? WHERE id=?', (time.time(), session['id']))
         task = self.store.one('SELECT * FROM agent_tasks WHERE id=?', (task_id,))
         try:
+            try:
+                secrets = [value.get_secret_value() for value in self.settings.__dict__.values()
+                           if hasattr(value, 'get_secret_value')]
+                self.traces[task_id] = TaskTrace(self.settings.data_dir, task, text, secrets)
+                self.trace_call(task_id, 'flush')
+            except OSError as exc:
+                logger.warning('Cannot create task transcript %s (%s)', task_id, type(exc).__name__)
             context = await asyncio.to_thread(self.prepare, task, drawing, text)
             previous = {message['info']['id'] for message in await self.agent.messages(session['id'])}
+            if task_id in self.traces:
+                self.traces[task_id].previous = set(previous)
+            self.trace_call(task_id, 'note', 'input', {
+                'drawing_id': task['drawing_id'], 'revision': task['source_revision'],
+                'files': context['input_files'], 'preview': context.get('preview'),
+            })
             if self.store.one('SELECT status FROM agent_tasks WHERE id=?', (task_id,))['status'] == 'stopping':
                 self.set_status(task_id, 'cancelled')
+                self.traces.pop(task_id, None)
                 return task_id
             await self.agent.prompt_async(
                 session['id'], text, system='本轮可信文件任务上下文（以此覆盖历史文件目标）：' + encode(context),
@@ -211,6 +242,7 @@ class AgentTasks:
             except Exception:
                 pass
             self.set_status(task_id, 'failed', '任务未能提交，请检查服务后重试。')
+            self.traces.pop(task_id, None)
             raise
         return task_id
 
@@ -286,6 +318,8 @@ class AgentTasks:
                         return
                 else:
                     messages = await self.agent.messages(session_id)
+                    self.trace_call(task_id, 'reconcile', messages)
+                    self.trace_call(task_id, 'flush')
                     terminal = terminal_assistant(messages, previous)
                     idle = (await self.agent.session_status()).get(session_id, {}).get('type') in {None, 'idle'}
                     if idle and await freecad.idle():
@@ -319,6 +353,7 @@ class AgentTasks:
                             recovery_message = terminal or (current[-1] if current else None)
                             recoveries.append({'message_id': recovery_message['info']['id'] if recovery_message else None,
                                                'finish': reason, 'at': now()})
+                            self.trace_call(task_id, 'note', 'automatic_recovery', recoveries[-1])
                             (self.root(task_id) / 'recovery.json').write_text(encode(recoveries), encoding='utf-8')
                             logger.warning('Resuming task %s after incomplete model reply (%s), attempt %d',
                                            task_id, reason, len(recoveries))
@@ -342,6 +377,7 @@ class AgentTasks:
                             from cad_domain.delivery import feedback_preview, feedback_summary, mark_feedback, review_delivery
                             context = json.loads((self.root(task_id) / 'context.json').read_text())
                             review = await asyncio.to_thread(review_delivery, context)
+                            self.trace_call(task_id, 'note', 'backend_delivery_review', review)
                             if self.store.one('SELECT status FROM agent_tasks WHERE id=?', (task_id,))['status'] == 'stopping':
                                 continue
                             if review['status'] != 'passed':
@@ -412,6 +448,13 @@ class AgentTasks:
             self.store.execute('DELETE FROM artifacts WHERE task_id=?', (task_id,))
             self.set_status(task_id, 'failed', '文件任务处理失败，请查看后端日志；原图已保留。')
         finally:
+            try:
+                messages = await asyncio.wait_for(self.agent.messages(session_id), 3)
+                self.trace_call(task_id, 'reconcile', messages)
+            except Exception:
+                self.trace_call(task_id, 'note', 'final_snapshot_unavailable', '保留已收到的事件与最近快照。')
+            self.trace_call(task_id, 'flush', self.store.one('SELECT * FROM agent_tasks WHERE id=?', (task_id,)))
+            self.traces.pop(task_id, None)
             self.runners.pop(task_id, None)
 
     async def abort(self, session_id):

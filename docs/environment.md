@@ -9,7 +9,7 @@
 | Node.js | 24.21.0，Linux x64 |
 | 智能体引擎（OpenCode 来源） | 1.18.31；本地源码显示 local |
 | Bun（源码运行） | 1.3.14 |
-| DeepSeek API 模型 | deepseek-flash |
+| 模型 API | `.env` 的 `LLM_PROVIDER` 选择 DeepSeek / AIAPI，型号由对应 MODEL 字段决定 |
 | MCP Python SDK | 2.2.0，MCPServer |
 | FastAPI / Uvicorn | 0.141.1 / 0.53.0 |
 | ezdxf（后端 Python 3.12 / FreeCAD Python 3.11） | 两个独立安装均为 1.4.4 |
@@ -44,7 +44,11 @@ FreeCAD 下载包按官方 GitHub Release 的 SHA-256 校验，记录见 `freeca
 
 | 字段 | 用途 |
 | --- | --- |
-| DEEPSEEK_API_KEY / BASE_URL / MODEL | 后端模型配置；模型调用只由 OpenCode 负责 |
+| LLM_PROVIDER | `deepseek` 或 `aiapi`；重启服务后使用所选模型，旧会话续聊同样生效 |
+| DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL / DEEPSEEK_MODEL | 选择 `deepseek` 时使用的密钥、地址、模型 |
+| AIAPI_API_KEY / AIAPI_BASE_URL / AIAPI_MODEL | 选择 `aiapi` 时使用的密钥、地址、模型 |
+| DEEPSEEK_NETWORK_MODE / AIAPI_NETWORK_MODE | 各厂商独立选择 `auto` / `direct` / `proxy` |
+| AIAPI_CONTEXT_LIMIT / AIAPI_OUTPUT_LIMIT | 本项目上下文和输出预算，默认 128000 / 32000 |
 | CAD_API_BASE_URL | MCP 访问本地 API，默认 8000 |
 | CAD_INTERNAL_TOKEN | 历史字段，旧内部 CAD API 已删除；现有值可保留但不使用 |
 | AGENT_BASE_URL | 本地 OpenCode 地址，默认 4096 |

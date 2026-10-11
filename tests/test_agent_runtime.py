@@ -40,7 +40,10 @@ def test_project_config_exposes_only_freecad_mcp_and_preserves_model_settings():
         "DEEPSEEK_BASE_URL": "https://model.example.invalid/v1/",
         "DEEPSEEK_API_KEY": "fake-model-key",
     })
-    assert config["permission"] == {"*": "deny", "freecad_*": "allow"}
+    assert config["permission"] == {
+        "*": "deny", "freecad_*": "allow",
+        "skill": {"*": "deny", "site-layout": "allow"},
+    }
     assert list(config["mcp"]) == ["freecad"]
     assert config["mcp"]["freecad"]["command"] == [
         "bash", str(runtime.ROOT / "freecad/mcp.sh")

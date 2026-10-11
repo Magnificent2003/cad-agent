@@ -7,6 +7,7 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 import httpx
+from .provider import select_provider
 
 
 class ModelNetworkError(RuntimeError):
@@ -27,13 +28,17 @@ def _bypass(env: dict[str, str], *hosts: str) -> dict[str, str]:
 def prepare_model_network(env: dict[str, str]) -> tuple[dict[str, str], str]:
     """One authenticated, non-generating API request per candidate startup route."""
     result = _bypass(env, 'localhost', '127.0.0.1', '::1')
-    base = result.get('DEEPSEEK_BASE_URL', 'https://api.deepseek.com').rstrip('/')
+    try:
+        selected = select_provider(result)
+    except ValueError as exc:
+        raise ModelNetworkError(str(exc)) from None
+    if not result.get(selected.key_name):
+        raise ModelNetworkError('缺少环境变量：' + selected.key_name)
+    base = selected.base_url
     host = urlsplit(base).hostname
     if not host:
         raise ModelNetworkError('模型 API 地址无效。')
-    mode = result.get('DEEPSEEK_NETWORK_MODE', 'auto').lower().strip()
-    if mode not in {'auto', 'direct', 'proxy'}:
-        raise ModelNetworkError('DEEPSEEK_NETWORK_MODE 只能是 auto、direct 或 proxy。')
+    mode = selected.network_mode
     proxy = (result.get('https_proxy') or result.get('HTTPS_PROXY') or
              result.get('all_proxy') or result.get('ALL_PROXY'))
     routes = [('direct', None)] if mode == 'direct' else [('proxy', proxy)] if mode == 'proxy' else [('direct', None), ('proxy', proxy)]
@@ -44,7 +49,7 @@ def prepare_model_network(env: dict[str, str]) -> tuple[dict[str, str], str]:
             continue
         try:
             with httpx.Client(proxy=address, trust_env=False, timeout=httpx.Timeout(8, connect=4)) as client:
-                response = client.get(base + '/models', headers={'Authorization': 'Bearer ' + result['DEEPSEEK_API_KEY']})
+                response = client.get(base + '/models', headers={'Authorization': 'Bearer ' + result[selected.key_name]})
         except ImportError:
             errors.append('代理：当前环境不支持 SOCKS，请使用 HTTP 代理地址')
             continue
@@ -62,7 +67,7 @@ def prepare_model_network(env: dict[str, str]) -> tuple[dict[str, str], str]:
         except (ValueError, KeyError, TypeError):
             errors.append(('直连' if route == 'direct' else '代理') + '：API 返回格式不正确')
             continue
-        model = result.get('DEEPSEEK_MODEL', 'deepseek-flash').strip() or 'deepseek-flash'
+        model = selected.model
         if model not in models:
             raise ModelNetworkError(f'模型 API 已连接，但没有配置的模型 {model}。')
         if route == 'direct':

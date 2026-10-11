@@ -22,13 +22,15 @@ def main():
     for key, value in dotenv_values(template).items():
         if key not in current:
             set_key(target, key, value or "")
+            current[key] = value or ""
     for key in ("AGENT_SERVER_PASSWORD",):
         if not current.get(key):
             set_key(target, key, secrets.token_urlsafe(32))
     target.chmod(0o600)
     print("环境字段已同步，本地服务凭据已配置。")
-    if not current.get("DEEPSEEK_API_KEY"):
-        print("请在 .env 中配置 DEEPSEEK_API_KEY 以启用对话。")
+    selected = (current.get("LLM_PROVIDER") or "deepseek").strip().upper()
+    if not current.get(selected + "_API_KEY"):
+        print(f"请在 .env 中配置 {selected}_API_KEY 以启用所选模型。")
 
 
 if __name__ == "__main__":

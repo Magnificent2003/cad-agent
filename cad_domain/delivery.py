@@ -127,9 +127,16 @@ def register(context: dict, path: Path, *, profile: str, facts=None, components=
     previous = contract.get(group, {}).get(key, {})
     if previous.get('profile') == 'site_layout' and profile != 'site_layout':
         raise ValueError('已登记的场布成果不能降级为普通文件检查。')
+    from .spatial_delivery import is_spatial_evidence
+    inherited_facts = previous.get('facts', contract.get('site_facts'))
+    effective_facts = facts if facts is not None else inherited_facts
+    if is_spatial_evidence(inherited_facts) and not is_spatial_evidence(effective_facts):
+        raise ValueError('已采用机器空间证据的场布成果不能更换为自填轮廓或旧人工确认契约。')
+    if is_spatial_evidence(effective_facts) and profile != 'site_layout':
+        raise ValueError('机器空间事实成果必须按site_layout复核，不能降级general。')
     entry = {
         'profile': profile,
-        'facts': facts if facts is not None else previous.get('facts', contract.get('site_facts')),
+        'facts': effective_facts,
         'components': components if components is not None else previous.get('components'),
         'allowed_changes': list(dict.fromkeys([*previous.get('allowed_changes', []), *(allowed_changes or [])])),
     }
@@ -183,12 +190,13 @@ def _has_site_tags(path: Path) -> bool:
 
 
 def review_file(context: dict, path: Path, *, entry: dict, render=False, settings=None) -> dict:
+    from .spatial_delivery import is_spatial_evidence
     profile = entry.get('profile', 'general')
-    if profile == 'general' and _has_site_tags(path):
+    if is_spatial_evidence(entry.get('facts')) or (profile == 'general' and _has_site_tags(path)):
         profile = 'site_layout'
     report = check_dxf(str(baseline_file(context)), str(path), profile=profile,
                        facts=entry.get('facts'), components=entry.get('components'),
-                       allowed_changes=entry.get('allowed_changes', []))
+                       allowed_changes=entry.get('allowed_changes', []), context=context)
     report.update(profile=profile, path=str(path), name=path.name)
     if render:
         try:

@@ -21,7 +21,8 @@ from shapely import affinity
 from shapely.errors import ShapelyError
 from shapely.geometry import LineString, Point, Polygon
 
-from .geometry import digest, entity_polygon, load_site, occupied_polygon
+from .geometry import _snapshots, check_dxf, digest, entity_polygon, load_site, occupied_polygon
+from .tolerances import AREA_TOLERANCE_M2, AXIS_TOLERANCE_DEG, LINEAR_TOLERANCE_M
 
 
 APPID = "CAD_AGENT_SITE"
@@ -113,11 +114,11 @@ def _current_components(doc, site) -> dict[str, dict]:
             if len(coords) != 5:
                 raise LayoutError("invalid_component", f"Existing component {component_id} is not a rectangle")
             actual = [math.dist(coords[i], coords[i + 1]) for i in range(4)]
-            if any(not math.isclose(a, b, rel_tol=1e-7, abs_tol=1e-7)
+            if any(abs(a - b) > LINEAR_TOLERANCE_M
                    for a, b in zip(actual, [width, depth, width, depth])):
                 raise LayoutError("dimension_mismatch", f"Existing component {component_id} dimensions differ from its tag")
             diagonal = math.dist(coords[0], coords[2])
-            if not math.isclose(diagonal, math.hypot(width, depth), rel_tol=1e-7, abs_tol=1e-7):
+            if abs(diagonal - math.hypot(width, depth)) > LINEAR_TOLERANCE_M:
                 raise LayoutError("invalid_component", f"Existing component {component_id} is not rectangular")
             position = list(coords[0])
             angle = math.degrees(math.atan2(coords[1][1] - coords[0][1], coords[1][0] - coords[0][0]))
@@ -126,8 +127,7 @@ def _current_components(doc, site) -> dict[str, dict]:
             width = _number(tag.get("width_m"), "width_m", positive=True)
             if entity.dxftype() != "LWPOLYLINE" or entity.closed:
                 raise LayoutError("invalid_road", f"Existing road {component_id} must be an open LWPOLYLINE")
-            if not math.isclose(float(entity.dxf.const_width) * site.metres_per_unit,
-                                width, rel_tol=1e-7, abs_tol=1e-7):
+            if abs(float(entity.dxf.const_width) * site.metres_per_unit - width) > LINEAR_TOLERANCE_M:
                 raise LayoutError("dimension_mismatch", f"Existing road {component_id} width differs from its tag")
             points = list(_to_local(site, LineString(list(entity.get_points("xy")))).coords)
             spec = dict(tag, kind="road", points_m=points)
@@ -136,11 +136,16 @@ def _current_components(doc, site) -> dict[str, dict]:
     return result
 
 
-def _collision(polygon, boundary, occupied: list[tuple[str, Any]], clearance: float) -> str | None:
-    if not boundary.covers(polygon) or (clearance > 0 and polygon.distance(boundary.boundary) < clearance):
-        return "outside the confirmed boundary or its required clearance"
+def _collision(polygon, boundary, occupied: list[tuple[str, Any]], clearance: float,
+               metres_per_unit: float = 1.0) -> str | None:
+    linear_tolerance = LINEAR_TOLERANCE_M / metres_per_unit
+    area_scale = metres_per_unit ** 2
+    if (polygon.difference(boundary).area * area_scale > AREA_TOLERANCE_M2
+            or polygon.distance(boundary.boundary) + linear_tolerance < clearance):
+        return "超出工作场界或未满足所采用的净距"
     for name, other in occupied:
-        if polygon.intersection(other).area > 0 or (clearance > 0 and polygon.distance(other) < clearance):
+        if (polygon.intersection(other).area * area_scale > AREA_TOLERANCE_M2
+                or polygon.distance(other) + linear_tolerance < clearance):
             return f"conflicts with {name}"
     return None
 
@@ -157,7 +162,7 @@ def _place_rectangle(spec, site, boundary, occupied, clearance, facts):
     if spec.get("position_m") is not None:
         position = _point(spec["position_m"], "position_m")
         polygon = _to_world(site, _rectangle(spec, position))
-        conflict = _collision(polygon, boundary, occupied, clearance)
+        conflict = _collision(polygon, boundary, occupied, clearance, site.metres_per_unit)
         if conflict:
             raise LayoutError("placement_conflict", f"Component {spec['id']} {conflict}")
         return polygon, position, None
@@ -193,7 +198,7 @@ def _place_rectangle(spec, site, boundary, occupied, clearance, facts):
                 x = min(minx + ix * step, maxx)
                 attempts += 1
                 polygon = _to_world(site, _rectangle(spec, (x, y)))
-                if _collision(polygon, boundary, occupied, clearance) is None:
+                if _collision(polygon, boundary, occupied, clearance, site.metres_per_unit) is None:
                     return polygon, (x, y), {"attempts": attempts, "step_m": step, "max_candidates": limit}
     raise LayoutError("no_placement", f"Component {spec['id']}: no valid placement in {attempts} bounded candidates (step {step:g} m); dimensions unchanged")
 
@@ -283,13 +288,14 @@ def _remove(doc, item, allowed):
         allowed.append(handle)
 
 
-def build_layout(source, target, *, facts: dict, components: list[dict], baseline=None) -> dict:
+def build_layout(source, target, *, facts: dict, components: list[dict], baseline=None, context=None) -> dict:
     """Add/move/remove explicit components, publishing only a wholly valid layout.
 
     ``baseline`` binds confirmed facts while ``source`` can be a prior task
     output. Current tagged geometry is read anew on every call. A finite search
     reports failure when exhausted; it never shrinks parts or relaxes clearance.
-    The delivery gate remains responsible for full baseline preservation checks.
+    Machine spatial evidence requires explicit locations and validates the saved
+    DXF before publication; delivery independently rechecks the same baseline.
     """
     report = {"status": "failed", "components": [], "allowed_changes": [], "issues": []}
     temporary = None
@@ -300,17 +306,28 @@ def build_layout(source, target, *, facts: dict, components: list[dict], baselin
             raise LayoutError("source_overwrite", "Target must differ from source and confirmed baseline")
         if not isinstance(facts, dict) or not isinstance(components, list):
             raise LayoutError("invalid_request", "facts must be an object and components must be a list")
-        site = load_site(baseline, facts)
+        site = load_site(baseline, facts, context=context)
+        machine_evidence = site.reference_mode == "spatial_evidence"
+        if machine_evidence:
+            report["spatial_evidence"] = site.evidence
+            report["scope"] = "仅验证显式构件的几何约束和原图保留；未验收设施预算完整性、道路连通、塔吊覆盖或工程规范。"
         report.update(source_sha256=digest(source), baseline_sha256=site.source_sha256, facts=facts)
         doc = ezdxf.readfile(source)
         # A revised source must still contain the original confirmed geometry.
         original = ezdxf.readfile(baseline)
         if doc.header.get("$INSUNITS", 0) != original.header.get("$INSUNITS", 0):
             raise LayoutError("units_changed", "Current source changed the confirmed baseline INSUNITS")
-        protected = [*facts["boundary"]["handles"], *facts["obstacles"]["handles"]]
-        for handle in protected:
-            if not entity_polygon(doc, handle).equals_exact(entity_polygon(original, handle), 0):
-                raise LayoutError("protected_geometry_changed", f"Confirmed site entity {handle} changed in the current source")
+        protected = [*site.boundary_handles, *(handle for handle, _ in site.obstacles)]
+        if machine_evidence:
+            before, now = _snapshots(original), _snapshots(doc)
+            changed = [handle for handle, value in before.items() if now.get(handle) != value]
+            if changed:
+                raise LayoutError("original_entity_changed", f"当前输入已改变原图实体，不能作为场布延续：{changed[:10]}")
+            protected = list(before)
+        else:
+            for handle in protected:
+                if not entity_polygon(doc, handle).equals_exact(entity_polygon(original, handle), 0):
+                    raise LayoutError("protected_geometry_changed", f"Confirmed site entity {handle} changed in the current source")
         current = _current_components(doc, site)
         clearance_m = _number(facts.get("clearance_m", 0), "clearance_m")
         if clearance_m < 0:
@@ -344,14 +361,24 @@ def build_layout(source, target, *, facts: dict, components: list[dict], baselin
                 _remove(doc, existing, report["allowed_changes"])
                 del current[component_id]
             if operation != "remove":
-                pending.append(_prepare(spec, existing))
+                prepared = _prepare(spec, existing)
+                if machine_evidence and prepared["kind"] == "rectangle" and prepared.get("position_m") is None:
+                    raise LayoutError("position_required", "机器事实契约需要智能体给出矩形position_m（旋转前左下角/旋转锚点）；工具不自动生成位置。")
+                if machine_evidence and "clearance_m" in spec:
+                    raise LayoutError("invalid_clearance", "本次writer的统一净距应设置在facts.clearance_m中，不能在构件内声明未被采用的净距。")
+                pending.append(prepared)
 
         occupied = [(f"obstacle {handle}", polygon) for handle, polygon in site.obstacles]
+        road_names = set()
         for component_id, item in current.items():
-            conflict = _collision(item["polygon"], boundary, occupied, clearance)
+            is_road = item["spec"]["kind"] == "road"
+            blockers = [entry for entry in occupied if not (is_road and entry[0] in road_names)]
+            conflict = _collision(item["polygon"], boundary, blockers, clearance, site.metres_per_unit)
             if conflict:
                 raise LayoutError("existing_component_conflict", f"Existing component {component_id} {conflict}")
             occupied.append((f"component {component_id}", item["polygon"]))
+            if is_road:
+                road_names.add(f"component {component_id}")
 
         for spec in pending:
             if spec["kind"] == "rectangle":
@@ -365,16 +392,24 @@ def build_layout(source, target, *, facts: dict, components: list[dict], baselin
                 line = LineString(points)
                 if not line.is_simple or line.length <= 0 or any(a == b for a, b in zip(points, points[1:])):
                     raise LayoutError("invalid_road", "Road centerline must be simple, nonzero, and have no repeated adjacent points")
+                if machine_evidence:
+                    for a, b in zip(points, points[1:]):
+                        angle = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0])) % 90
+                        if min(angle, 90 - angle) > AXIS_TOLERANCE_DEG:
+                            raise LayoutError("road_axis_unmet", "道路points_m的每段须沿工作局部坐标的X或Y方向，角度容差0.5度。")
                 spec["points_m"] = points
                 polygon = _to_world(site, line.buffer(spec["width_m"] / 2, cap_style=2, join_style=2))
                 if polygon.is_empty or not polygon.is_valid or polygon.geom_type != "Polygon":
                     raise LayoutError("invalid_road", "Road width does not produce one valid corridor")
-                conflict = _collision(polygon, boundary, occupied, clearance)
+                blockers = [entry for entry in occupied if entry[0] not in road_names]
+                conflict = _collision(polygon, boundary, blockers, clearance, site.metres_per_unit)
                 if conflict:
                     raise LayoutError("placement_conflict", f"Road {spec['id']} {conflict}")
                 search = None
             current[spec["id"]] = {"spec": spec, "polygon": polygon, "new": True, "search": search}
             occupied.append((f"component {spec['id']}", polygon))
+            if spec["kind"] == "road":
+                road_names.add(f"component {spec['id']}")
 
         if APPID not in doc.appids:
             doc.appids.new(APPID)
@@ -395,10 +430,21 @@ def build_layout(source, target, *, facts: dict, components: list[dict], baselin
         saved = ezdxf.readfile(temporary)
         for item in current.values():
             actual = occupied_polygon(saved, item["metadata"]["handle"], item["metadata"])
-            if not actual.equals_exact(item["polygon"], 1e-7 / site.metres_per_unit):
-                # Road buffers can have a different start vertex/order.
-                if actual.symmetric_difference(item["polygon"]).area > 1e-10 / site.metres_per_unit**2:
+            # Matching native vertices use the physical length tolerance. A
+            # microscopic shift along a long edge can have a larger symmetric
+            # difference area; this is serialization roundoff, not a collision.
+            if not actual.equals_exact(item["polygon"], LINEAR_TOLERANCE_M / site.metres_per_unit):
+                # Road buffers may start at a different vertex/order.
+                if (actual.hausdorff_distance(item["polygon"]) * site.metres_per_unit > LINEAR_TOLERANCE_M
+                        or actual.symmetric_difference(item["polygon"]).area * site.metres_per_unit ** 2 > AREA_TOLERANCE_M2):
                     raise LayoutError("serialization_mismatch", f"Saved geometry changed for {item['spec']['id']}")
+        if machine_evidence:
+            actual_review = check_dxf(baseline, temporary, profile="site_layout", facts=facts,
+                                      components=manifest, context=context)
+            report["checks"] = actual_review["checks"]
+            if actual_review["status"] != "passed":
+                report.update(status=actual_review["status"], issues=actual_review["issues"], allowed_changes=[])
+                return report
         target_hash = digest(temporary)
         os.replace(temporary, target)
         temporary = None

@@ -23,7 +23,9 @@ Robustness and performance guarantees:
 6. Stuck-task fail-fast: once a task that already started times out, later GUI
    calls fail immediately until that task returns. Status remains available
    through a GUI-independent RPC method.
-7. Timeout counts from task start: the GUI thread runs queued tasks one at a
+7. Named modal-dialog failures: report blocked UI within a heartbeat and cancel
+   requests that have not started; never run stale queued writes later.
+8. Timeout counts from task start: the GUI thread runs queued tasks one at a
    time, so a call that arrives while another task is running waits in the
    FIFO first. That wait is budgeted separately (``queue_timeout``) and does
    not consume the task's own ``timeout``. Two concurrent ``execute_code``
@@ -42,7 +44,7 @@ import FreeCAD
 import FreeCADGui
 from PySide import QtCore, QtWidgets
 
-from rpc_server.dispatch_health import DispatchHealth, stuck_failure
+from rpc_server.dispatch_health import DispatchHealth, modal_failure, stuck_failure
 
 
 _rpc_request_queue: "queue.Queue[Any]" = queue.Queue()
@@ -80,6 +82,7 @@ def init_waker() -> None:
     """Create the wake-signal bridge. Call once from the GUI thread."""
     global _waker
     _waker = _WakeSignal()
+    _observe_modal()
 
 
 def cleanup_waker() -> None:
@@ -106,6 +109,21 @@ def _flush_gui_events(delay_ms: int = 20) -> None:
         app.processEvents(flags, delay_ms)
 
 
+def _observe_modal():
+    # Observe even while idle (and inside a nested dialog event loop). A live
+    # RPC socket does not mean the GUI is available for CAD operations.
+    modal = QtWidgets.QApplication.activeModalWidget()
+    previous_modal = _dispatch_health.snapshot().get("modal_title")
+    if modal is not None:
+        title = modal.windowTitle() or type(modal).__name__
+        _dispatch_health.set_modal(title, modal.metaObject().className())
+        if title != previous_modal:
+            FreeCAD.Console.PrintError(f"MCP RPC: GUI_MODAL_BLOCKED: {title}\n")
+    else:
+        _dispatch_health.set_modal(None)
+    return modal
+
+
 def process_gui_tasks(reschedule: bool = True) -> None:
     """Drain queued GUI-thread callables and optionally reschedule.
 
@@ -118,7 +136,13 @@ def process_gui_tasks(reschedule: bool = True) -> None:
     start a second heartbeat chain alongside the existing 500 ms one.
     """
     global _processing, _processing_since
+    modal = _observe_modal()
     if _processing:
+        # A heartbeat can run inside a modal's nested Qt event loop. Keep it
+        # alive so clearing that dialog is observed even when the task was
+        # entered through the signal path (which does not reschedule itself).
+        if reschedule:
+            QtCore.QTimer.singleShot(500, process_gui_tasks)
         return  # re-entrant call from processEvents inside a task; skip
 
     shutdown = False
@@ -129,8 +153,8 @@ def process_gui_tasks(reschedule: bool = True) -> None:
             return  # user is dragging; defer to next tick
         if QtWidgets.QApplication.activePopupWidget() is not None:
             return  # context menu or popup open; defer to next tick
-        if QtWidgets.QApplication.activeModalWidget() is not None:
-            return  # modal dialog open; defer to next tick
+        if modal is not None:
+            return  # callers receive a named failure and cancel queued work
 
         _processing = True
         _processing_since = time.monotonic()
@@ -146,6 +170,8 @@ def process_gui_tasks(reschedule: bool = True) -> None:
             status_bar.showMessage("MCP: processing…")
         try:
             while not _rpc_request_queue.empty():
+                if _observe_modal() is not None:
+                    return
                 task = _rpc_request_queue.get()
                 if task is _SHUTDOWN:
                     shutdown = True
@@ -258,7 +284,19 @@ def dispatch_to_gui(
     # Phase 1: wait for the task to start. Earlier queued tasks run first on
     # the GUI thread; that wait must not eat into this task's run budget.
     queue_deadline = queued_at + queue_timeout
-    if not started_event.wait(max(0, queue_deadline - time.monotonic())):
+    while not started_event.is_set():
+        snapshot = _dispatch_health.snapshot()
+        if snapshot["state"] == "blocked":
+            with state_lock:
+                cancelled = started_at is None
+            if cancelled:
+                return modal_failure(snapshot)
+            break
+        remaining = queue_deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        started_event.wait(min(0.1, remaining))
+    if not started_event.is_set():
         with state_lock:
             cancelled = started_at is None
     if cancelled:
@@ -281,17 +319,25 @@ def dispatch_to_gui(
         }
 
     # Phase 2: count from actual GUI start, even if this RPC thread woke late.
+    # A script may itself open a modal dialog. Report that promptly too, but
+    # accurately say the already-running operation cannot be cancelled.
     assert started_at is not None
-    run_remaining = max(0, started_at + timeout - time.monotonic())
-    try:
-        return response_queue.get(timeout=run_remaining)
-    except queue.Empty:
-        with state_lock:
-            # Completion may have won the race while we acquired the lock.
-            try:
-                return response_queue.get_nowait()
-            except queue.Empty:
-                stuck = _dispatch_health.mark_timed_out(task_id, timeout)
-                if stuck is not None:
-                    return stuck_failure(stuck, just_timed_out=True)
-                return {"success": False, "error": f"GUI dispatch timed out after {timeout}s"}
+    while True:
+        run_remaining = max(0, started_at + timeout - time.monotonic())
+        try:
+            return response_queue.get(timeout=min(0.1, run_remaining))
+        except queue.Empty:
+            with state_lock:
+                # Completion may have won the race while we acquired the lock.
+                try:
+                    return response_queue.get_nowait()
+                except queue.Empty:
+                    snapshot = _dispatch_health.snapshot()
+                    if snapshot["state"] == "blocked" and snapshot["task_id"] == task_id:
+                        return modal_failure(snapshot, task_started=True)
+                    if time.monotonic() < started_at + timeout:
+                        continue
+                    stuck = _dispatch_health.mark_timed_out(task_id, timeout)
+                    if stuck is not None:
+                        return stuck_failure(stuck, just_timed_out=True)
+                    return {"success": False, "error": f"GUI dispatch timed out after {timeout}s"}

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from agent.client import AgentError, event_session_id
 from agent.session import is_internal_message, is_internal_part
+from agent.progress import tool_progress
 from ..store import now
 from .drawings import get_drawing
 
@@ -21,7 +22,7 @@ def visible_part(part):
         return {**common, "text": part.get("text", "")}
     if part.get("type") == "tool":
         state = part.get("state", {})
-        return {**common, "tool": part.get("tool"), "state": {"status": state.get("status"), "title": state.get("title"), "error": "工具执行未成功，请查看助手说明。" if state.get("error") else None}}
+        return {**common, "tool": part.get("tool"), "state": tool_progress(part.get("tool") or "", state)}
     return None
 
 
@@ -137,7 +138,7 @@ async def messages(session_id: str, request: Request):
         if info.get("role") == "user" and not parts:
             continue
         # Do not expose internal context, reasoning history or system prompts.
-        result.append({"id": info.get("id"), "role": info["role"], "parts": parts, "created_at": info.get("time", {}).get("created"), "error": "模型任务未正常完成，请重试。" if info.get("error") else None})
+        result.append({"id": info.get("id"), "role": info["role"], "parts": parts, "created_at": info.get("time", {}).get("created"), "completed_at": info.get("time", {}).get("completed"), "finish": info.get("finish"), "error": "模型任务未正常完成，请重试。" if info.get("error") else None})
     return result
 
 

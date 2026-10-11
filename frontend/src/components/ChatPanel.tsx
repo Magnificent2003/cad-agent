@@ -4,8 +4,6 @@ import {
   ArrowRight,
   ArrowUp,
   Check,
-  ChevronRight,
-  CircleAlert,
   FileSearch,
   History,
   LoaderCircle,
@@ -14,13 +12,12 @@ import {
   ShieldCheck,
   Sparkles,
   Square,
-  Wrench,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { metadataInfo } from '../api/metadata'
-import { readableError } from '../api/client'
-import type { Drawing, Message, MessagePart, Session } from '../api/types'
+import ExecutionTrace from './ExecutionTrace'
+import type { Drawing, Message, Session } from '../api/types'
 
 interface Props {
   currentLabel: string
@@ -43,49 +40,6 @@ interface Props {
   connected: boolean
   historical: boolean
   onCurrentRevision: () => void
-}
-
-const toolNames: Record<string, string> = {
-  execute_code: '执行图纸脚本',
-  get_async_status: '检查执行状态',
-  get_view: '查看图纸',
-  screenshot: '查看图纸',
-  get_objects: '检查图纸对象',
-  get_object: '读取对象属性',
-  get_rpc_status: '检查图纸服务',
-  get_documents: '查看已打开文档',
-  create_document: '创建图纸文档',
-}
-
-function ToolPart({ part }: { part: MessagePart }) {
-  const name =
-    Object.entries(toolNames).find(([key]) => part.tool?.includes(key))?.[1] || '处理图纸任务'
-  const status = part.state?.status
-  return (
-    <details className="tool-part">
-      <summary>
-        {status === 'completed' ? (
-          <Check size={13} />
-        ) : status === 'error' ? (
-          <CircleAlert size={13} />
-        ) : (
-          <Wrench size={13} />
-        )}
-        <span>{name}</span>
-        <span className="tool-status">
-          {status === 'completed' ? '已返回' : status === 'error' ? '未完成' : '处理中'}
-        </span>
-        <ChevronRight size={13} />
-      </summary>
-      <p>
-        {status === 'error'
-          ? readableError(new Error(part.state?.error || '处理未完成，请重试。'))
-          : status === 'completed'
-            ? '已返回处理结果，助手将继续整理。'
-            : '正在读取或处理当前图纸。'}
-      </p>
-    </details>
-  )
 }
 
 export default function ChatPanel(props: Props) {
@@ -121,6 +75,13 @@ export default function ChatPanel(props: Props) {
       message.error ||
       message.parts.some((part) => (part.type === 'text' && part.text) || part.type === 'tool'),
   )
+  const turns: { id: string; role: string; messages: Message[] }[] = []
+  for (const message of visibleMessages) {
+    const previous = turns.at(-1)
+    if (message.role === 'assistant' && previous?.role === 'assistant')
+      previous.messages.push(message)
+    else turns.push({ id: message.id, role: message.role, messages: [message] })
+  }
   const disabled =
     !drawing?.current_revision || historical || busy || messagesLoading || archived || transitioning
 
@@ -266,10 +227,10 @@ export default function ChatPanel(props: Props) {
             正在读取对话
           </div>
         )}
-        {visibleMessages.map((message) => (
-          <article className={`message message-${message.role}`} key={message.id}>
+        {turns.map((turn, index) => (
+          <article className={`message message-${turn.role}`} key={`${sessionId}:${turn.id}`}>
             <div className="message-label">
-              {message.role === 'assistant' ? (
+              {turn.role === 'assistant' ? (
                 <>
                   <span className="assistant-avatar">
                     <Sparkles size={13} />
@@ -281,20 +242,21 @@ export default function ChatPanel(props: Props) {
               )}
             </div>
             <div className="message-body">
-              {message.parts.map((part, index) =>
-                part.type === 'text' && part.text ? (
-                  <div className="markdown" key={part.id || index}>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>
-                  </div>
-                ) : part.type === 'tool' ? (
-                  <ToolPart part={part} key={part.id || index} />
-                ) : null,
-              )}
-              {message.error && (
-                <p className="message-error">
-                  <CircleAlert size={13} />
-                  {readableError(new Error(message.error))}
-                </p>
+              {turn.role === 'assistant' ? (
+                <ExecutionTrace
+                  messages={turn.messages}
+                  active={busy && index === turns.length - 1}
+                />
+              ) : (
+                turn.messages.flatMap((message) =>
+                  message.parts.map((part, partIndex) =>
+                    part.type === 'text' && part.text ? (
+                      <div className="markdown" key={`${message.id}:${part.id || partIndex}`}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>
+                      </div>
+                    ) : null,
+                  ),
+                )
               )}
             </div>
           </article>
@@ -304,7 +266,7 @@ export default function ChatPanel(props: Props) {
             {taskError}
           </p>
         )}
-        {busy && (
+        {busy && (stopping || turns.at(-1)?.role !== 'assistant') && (
           <div className="working-indicator" role="status">
             <LoaderCircle size={15} className="spin" />
             <span>{stopping ? '正在停止任务，确认处理状态…' : '助手正在处理…'}</span>

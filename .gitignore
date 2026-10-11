@@ -41,3 +41,11 @@ assets/fonts/local/
 *.dwl
 *.dwl2
 *.xlsx
+
+# Development records: version small reports and reproducible scripts only.
+# Drawings, renders, raw traces and computed facts remain local.
+/dev_log*/**
+!/dev_log*/
+!/dev_log*/*.md
+!/dev_log*/*.py
+!/dev_log*/*.cjs

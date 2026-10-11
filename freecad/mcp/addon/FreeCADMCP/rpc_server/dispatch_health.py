@@ -17,6 +17,16 @@ class DispatchHealth:
         self._started_at = 0.0
         self._timed_out = False
         self._timeout_seconds = 0.0
+        self._modal: dict[str, Any] | None = None
+
+    def set_modal(self, title: str | None, widget_class: str = "") -> None:
+        """Publish GUI-thread observations; RPC readers never touch Qt widgets."""
+        with self._lock:
+            if title is None:
+                self._modal = None
+            elif self._modal is None or self._modal["title"] != title:
+                self._modal = {"title": title, "widget_class": widget_class,
+                               "observed_at": self._clock()}
 
     def start(self, task_id: int, operation: str) -> None:
         with self._lock:
@@ -53,11 +63,25 @@ class DispatchHealth:
     def rejection(self) -> dict[str, Any] | None:
         """Return an immediate failure while a timed-out task is still running."""
         snapshot = self.snapshot()
+        if snapshot["state"] == "blocked":
+            return modal_failure(snapshot)
         if snapshot["state"] != "stuck":
             return None
         return stuck_failure(snapshot, just_timed_out=False)
 
     def _snapshot_locked(self) -> dict[str, Any]:
+        if self._modal is not None and not self._timed_out:
+            return {
+                "state": "blocked",
+                "task_id": self._active_task_id,
+                "operation": self._operation,
+                "modal_title": self._modal["title"],
+                "modal_class": self._modal["widget_class"],
+                "blocked_for_seconds": round(max(0.0, self._clock() - self._modal["observed_at"]), 3),
+                "running_for_seconds": round(max(0.0, self._clock() - self._started_at), 3)
+                if self._active_task_id else 0.0,
+                "timeout_seconds": self._timeout_seconds,
+            }
         if self._active_task_id == 0:
             return {
                 "state": "healthy",
@@ -75,6 +99,28 @@ class DispatchHealth:
             "running_for_seconds": round(elapsed, 3),
             "timeout_seconds": self._timeout_seconds,
         }
+
+
+def modal_failure(snapshot: dict[str, Any], *, task_started: bool = False) -> dict[str, Any]:
+    title = snapshot.get("modal_title") or "untitled modal dialog"
+    outcome = (
+        "The operation already started and cannot be safely cancelled. It may "
+        "continue after the dialog closes; inspect its result before retrying writes. "
+        if task_started else
+        "This request was not executed and has been cancelled. "
+    )
+    return {
+        "success": False,
+        "code": "GUI_MODAL_BLOCKED",
+        "operation_started": task_started,
+        "cancelled": not task_started,
+        "error": (
+            f"FreeCAD is blocked by modal dialog '{title}'. " + outcome
+            + "Resolve the dialog in the FreeCAD window before retrying; increasing "
+            "execution timeouts will not help. Recovery files have not been deleted."
+        ),
+        "dispatch": snapshot,
+    }
 
 
 def stuck_failure(

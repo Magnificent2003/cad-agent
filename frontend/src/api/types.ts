@@ -30,7 +30,15 @@ export interface MessagePart {
   type: string
   text?: string
   tool?: string
-  state?: { status?: string; title?: string; error?: string }
+  state?: {
+    status?: string
+    title?: string
+    error?: string
+    summary?: string
+    details?: string
+    outcome?: 'error' | 'returned' | 'running'
+    time?: { start?: number; end?: number }
+  }
 }
 
 export interface Message {
@@ -39,6 +47,8 @@ export interface Message {
   parts: MessagePart[]
   created_at?: string
   error?: string | null
+  finish?: string
+  completed_at?: number
 }
 
 export interface Job {
